@@ -47,9 +47,8 @@ const navigationItems: NavigationItem[] = [
   
   // Both roles
   { name: 'Account Management', href: '/dashboard/account', icon: Users, permission: Permission.MANAGE_ACCOUNT },
-  { name: 'Profile Settings', href: '/dashboard/profile', icon: Settings, permission: Permission.MANAGE_PROFILE },
-  { name: 'Notifications', href: '/dashboard/notifications', icon: Bell, permission: Permission.VIEW_NOTIFICATIONS },
-  
+
+
   // Admin features
   { name: 'System Announcements', href: '/dashboard/announcements', icon: BookOpen, permission: Permission.MANAGE_ANNOUNCEMENTS },
   { name: 'Content Approval', href: '/dashboard/content-approval', icon: Brain, permission: Permission.APPROVE_CONTENT },

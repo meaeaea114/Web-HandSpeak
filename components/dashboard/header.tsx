@@ -14,6 +14,8 @@ interface HeaderProps {
 export function Header({ onMenuClick }: HeaderProps) {
   const { user, logout, switchRole } = useAuth()
   const [showRoleMenu, setShowRoleMenu] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
 
   const getRoleBadgeColor = (role: Role) => {
     switch (role) {
