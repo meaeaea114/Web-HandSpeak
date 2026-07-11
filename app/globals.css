@@ -116,6 +116,38 @@
   --sidebar-border: oklch(0.72 0.18 70);
   --sidebar-ring: oklch(0.82 0.21 70);
 }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+/* Ang track o ang daanan ng scrollbar - transparent para walang "cut edge" boundaries */
+::-webkit-scrollbar-track {
+  background: transparent;
+  margin-top: 16px;    
+  margin-bottom: 16px; 
+}
+
+/* Ang thumb o yung mismong nahahatak na bar */
+::-webkit-scrollbar-thumb {
+  background: rgba(82, 25, 3, 0.18); 
+  border-radius: 100px;              
+  border: 3px solid transparent;     
+  background-clip: padding-box;      
+}
+
+/* Hover state para kapag itinutok ang mouse pointer */
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(82, 25, 3, 0.35); 
+  border: 2px solid transparent;     
+  background-clip: padding-box;
+}
+
+/* Firefox Support Layouts Matrix */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(82, 25, 3, 0.18) transparent;
+}
 
 @layer base {
   * {

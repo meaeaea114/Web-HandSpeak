@@ -1,138 +1,71 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { Save, Bell, Lock, Globe } from 'lucide-react'
-import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { useAuth } from '@/lib/auth-context'
-import { Permission } from '@/lib/rbac'
+import React, { useState } from 'react';
+import { Upload, User, Phone, Briefcase, Lock, Save, Eye, EyeOff } from 'lucide-react';
 
-export default function SettingsPage() {
-  const { hasPermission } = useAuth()
-  const [settings, setSettings] = useState({
-    siteName: 'HandSpeak',
-    siteDescription: 'Filipino Sign Language Learning Platform',
-    maintenanceMode: false,
-    emailNotifications: true,
-    systemLogsRetention: 90,
-    maxUploadSize: 50,
-  })
-
-  if (!hasPermission(Permission.MANAGE_SETTINGS)) {
-    return (
-      <div className="flex h-96 items-center justify-center">
-        <div className="text-center">
-          <p className="text-lg font-semibold text-foreground">Access Denied</p>
-          <p className="text-sm text-muted-foreground">You don't have permission to manage system settings</p>
-        </div>
-      </div>
-    )
-  }
+export default function TeacherSettingsPage() {
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">System Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Configure system-wide settings and preferences</p>
+    <div className="w-full h-full flex flex-col gap-4 font-sans antialiased text-[#521903] overflow-hidden">
+      
+      {/* HEADER STRIP */}
+      <div className="bg-white/70 backdrop-blur-md rounded-2xl border border-white/50 p-4 shadow-sm flex-shrink-0">
+        <h2 className="text-sm font-black uppercase tracking-widest text-slate-800">Account & Profile Settings</h2>
       </div>
 
-      {/* General Settings */}
-      <Card className="p-6">
-        <div className="flex items-center gap-3 border-b border-border pb-4">
-          <Globe className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">General Settings</h2>
+      {/* TWO-PANEL SPLIT GRID */}
+      <div className="w-full flex-1 grid grid-cols-12 gap-5 overflow-hidden">
+        
+        {/* LEFT PANEL: PROFILE PICTURE */}
+        <div className="col-span-4 bg-white/70 backdrop-blur-md rounded-[28px] border border-white/50 p-6 flex flex-col items-center gap-6 shadow-sm">
+          <div className="w-48 h-48 bg-slate-100 rounded-full flex items-center justify-center border-4 border-white shadow-inner overflow-hidden">
+            <User className="h-20 w-20 text-slate-300" />
+          </div>
+          <button className="w-full flex items-center justify-center gap-2 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow-md">
+            <Upload className="h-4 w-4" /> Upload Photo
+          </button>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">JPG, PNG up to 5MB</p>
         </div>
-        <div className="mt-6 space-y-6">
-          <div>
-            <label className="text-sm font-medium text-foreground">Site Name</label>
-            <input
-              type="text"
-              value={settings.siteName}
-              onChange={(e) => setSettings({ ...settings, siteName: e.target.value })}
-              className="mt-2 w-full rounded-lg border border-input bg-background px-4 py-2 text-foreground"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-foreground">Site Description</label>
-            <textarea
-              value={settings.siteDescription}
-              onChange={(e) => setSettings({ ...settings, siteDescription: e.target.value })}
-              className="mt-2 w-full rounded-lg border border-input bg-background px-4 py-2 text-foreground"
-            />
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-input p-4">
-            <div>
-              <p className="font-medium text-foreground">Maintenance Mode</p>
-              <p className="text-sm text-muted-foreground">Enable to temporarily disable system access</p>
+
+        {/* RIGHT PANEL: UPDATES FORM */}
+        <div className="col-span-8 bg-white/70 backdrop-blur-md rounded-[28px] border border-white/50 p-8 shadow-sm flex flex-col overflow-y-auto max-h-[480px] space-y-8">
+          
+          {/* USER INFORMATION SECTION */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 border-b border-slate-100 pb-2">Update Your Information</h3>
+            <div className="grid grid-cols-1 gap-4 text-xs font-bold">
+              <input type="text" placeholder="Full Name (e.g., Ms. Teacher)" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
+              <input type="text" placeholder="Contact Number (+63...)" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
+              <input type="text" placeholder="Department / Assigned Section (e.g., SNED, Grade 4-A)" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
             </div>
-            <input
-              type="checkbox"
-              checked={settings.maintenanceMode}
-              onChange={(e) => setSettings({ ...settings, maintenanceMode: e.target.checked })}
-              className="h-5 w-5"
-            />
           </div>
-        </div>
-      </Card>
 
-      {/* Notification Settings */}
-      <Card className="p-6">
-        <div className="flex items-center gap-3 border-b border-border pb-4">
-          <Bell className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Notification Settings</h2>
-        </div>
-        <div className="mt-6 space-y-4">
-          <div className="flex items-center justify-between rounded-lg border border-input p-4">
-            <div>
-              <p className="font-medium text-foreground">Email Notifications</p>
-              <p className="text-sm text-muted-foreground">Send email notifications for important events</p>
+          {/* PASSWORD SECTION */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 border-b border-slate-100 pb-2">Change Password</h3>
+            <div className="grid grid-cols-1 gap-4 text-xs font-bold relative">
+              <input type={showPassword ? 'text' : 'password'} placeholder="Current Password" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
+              <input type={showPassword ? 'text' : 'password'} placeholder="New Password (min 6 characters)" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
+              <input type={showPassword ? 'text' : 'password'} placeholder="Confirm New Password" className="w-full px-4 py-3 bg-white border-2 border-slate-100 rounded-xl focus:border-[#F2B33D]/40 outline-none transition-all" />
+              
+              <button 
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-[85px] text-slate-400 hover:text-[#521903]"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
-            <input
-              type="checkbox"
-              checked={settings.emailNotifications}
-              onChange={(e) => setSettings({ ...settings, emailNotifications: e.target.checked })}
-              className="h-5 w-5"
-            />
           </div>
-        </div>
-      </Card>
 
-      {/* Security Settings */}
-      <Card className="p-6">
-        <div className="flex items-center gap-3 border-b border-border pb-4">
-          <Lock className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Security Settings</h2>
+          {/* SAVE BUTTON */}
+          <button className="w-full bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black py-3 rounded-xl text-xs uppercase tracking-wider transition-all active:scale-[0.98] shadow-md mt-4">
+            Save All Changes
+          </button>
         </div>
-        <div className="mt-6 space-y-6">
-          <div>
-            <label className="text-sm font-medium text-foreground">System Logs Retention (days)</label>
-            <input
-              type="number"
-              value={settings.systemLogsRetention}
-              onChange={(e) => setSettings({ ...settings, systemLogsRetention: parseInt(e.target.value) })}
-              className="mt-2 w-full rounded-lg border border-input bg-background px-4 py-2 text-foreground"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">How long to keep system logs before deletion</p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-foreground">Maximum Upload Size (MB)</label>
-            <input
-              type="number"
-              value={settings.maxUploadSize}
-              onChange={(e) => setSettings({ ...settings, maxUploadSize: parseInt(e.target.value) })}
-              className="mt-2 w-full rounded-lg border border-input bg-background px-4 py-2 text-foreground"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Maximum file size for uploads</p>
-          </div>
-        </div>
-      </Card>
 
-      {/* Save Button */}
-      <Button className="gap-2" size="lg">
-        <Save className="h-4 w-4" />
-        Save Settings
-      </Button>
+      </div>
     </div>
-  )
+  );
 }

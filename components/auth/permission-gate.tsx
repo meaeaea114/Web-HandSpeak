@@ -16,21 +16,27 @@ export function PermissionGate({ children, role }: PermissionGateProps) {
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading) {
-      if (!user) {
-        router.replace('/auth/login'); // Changed from /login
-      } else if (user.role !== role || !hasAccess(user.role, pathname)) {
-        const fallback = RBAC_CONFIG[user.role]?.defaultRedirect || '/auth/login'; // Changed from /login
-        router.replace(fallback);
-      }
+    if (isLoading) return;
+
+    if (!user) {
+      router.replace('/auth/login');
+      return;
+    }
+
+    if (user.role !== role || !hasAccess(user.role, pathname)) {
+      const fallback = RBAC_CONFIG[user.role]?.defaultRedirect || '/auth/login';
+      router.replace(fallback);
     }
   }, [user, isLoading, pathname, router, role]);
 
-  if (isLoading || !user || user.role !== role) {
+  if (isLoading || !user || user.role !== role || !hasAccess(user.role, pathname)) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <div className="animate-pulse text-sm font-medium text-muted-foreground">
-          Verifying security permissions...
+      <div className="flex h-screen w-screen items-center justify-center bg-[#F5E6C4]">
+        <div className="flex flex-col items-center gap-2">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#521903] border-t-transparent"></div>
+          <p className="text-xs font-bold text-[#521903] uppercase tracking-widest">
+            Validating HandSpeak System Access Permissions...
+          </p>
         </div>
       </div>
     );

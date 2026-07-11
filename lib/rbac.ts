@@ -7,25 +7,34 @@ export interface User {
   role: Role;
 }
 
+// Binalangkas ang lahat ng routes para sa parehong roles upang walang maging restriction loop
 export const RBAC_CONFIG = {
   admin: {
     allowedRoutes: ['/dashboard/admin'],
     defaultRedirect: '/dashboard/admin',
   },
   teacher: {
-    allowedRoutes: ['/dashboard/teacher'],
+    allowedRoutes: [
+      '/dashboard/teacher',
+      '/dashboard/teacher/overview',
+      '/dashboard/teacher/leaderboard',
+      '/dashboard/teacher/analytics',
+      '/dashboard/teacher/reports',
+      '/dashboard/teacher/students',
+      '/dashboard/teacher/content',
+      '/dashboard/teacher/account'
+    ],
     defaultRedirect: '/dashboard/teacher',
   },
 } as const;
 
 export function hasAccess(role: Role, pathname: string): boolean {
-  // 1. Defend against an undefined or null pathname right away
   if (!pathname) return false;
 
   const config = RBAC_CONFIG[role];
   if (!config) return false;
 
-  // 2. Safe check execution
+  // Pinapahintulutan ang eksaktong tugma o anumang sub-routes sa ilalim nito
   return config.allowedRoutes.some(route => 
     pathname === route || pathname.startsWith(`${route}/`)
   );
@@ -33,18 +42,17 @@ export function hasAccess(role: Role, pathname: string): boolean {
 
 export type Permission = string;
 
-// 2. Add the mock users so the login system has data to check against
 export const mockCurrentUser: User = {
   id: "1",
   name: "Mea Angel S. Magpantay",
-  email: "mea@example.com",
+  email: "mea@handspeak.edu",
   role: "admin",
 };
 
 export const mockFacultyUser: User = {
   id: "2",
   name: "Teacher Faculty",
-  email: "teacher@example.com",
+  email: "teacher@handspeak.edu",
   role: "teacher",
 };
 
@@ -55,5 +63,4 @@ export const Permission = {
   MANAGE_GESTURES: 'teacher'
 } as const;
 
-// 3. Keep the alias export for hasPermission
 export { hasAccess as hasPermission };

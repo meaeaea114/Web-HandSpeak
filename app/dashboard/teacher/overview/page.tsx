@@ -10,7 +10,7 @@ import {
   Clock 
 } from 'lucide-react';
 
-export default function TeacherDashboardMainPage() {
+export default function TeacherDashboardTelemetryOverviewPage() {
   const stats = [
     { 
       title: 'Total Students', 
@@ -62,22 +62,14 @@ export default function TeacherDashboardMainPage() {
   return (
     <div className="space-y-6 p-2 max-w-7xl mx-auto pb-6">
       
-      {/* SECTION 1: WELCOME STRIP CARD */}
-      <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.04),_inset_0_1px_0_rgba(255,255,255,0.6)] space-y-1.5">
-        <h2 className="text-lg font-bold text-[#521903]">Welcome back, Instructor!</h2>
-        <p className="text-xs text-[#521903]/60 font-medium leading-relaxed">
-          Monitor your gamified Filipino Sign Language (FSL) classroom progress, view live application student actions, and adjust lesson paths below.
-        </p>
-      </div>
-
-      {/* SECTION 2: TOP 3D TRACKING TELEMETRY STATS */}
+      {/* SECTION 1: TOP 3D TELEMETRY CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
             <div 
               key={stat.title} 
-              className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.04),_inset_0_1px_0_rgba(255,255,255,0.6)] hover:shadow-[4px_6px_20px_rgba(82,25,3,0.06)] hover:-translate-y-0.5 transition-all duration-200 flex items-start justify-between"
+              className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.05),_inset_0_1px_0_rgba(255,255,255,0.6)] hover:shadow-[4px_6px_20px_rgba(82,25,3,0.08)] hover:-translate-y-0.5 transition-all duration-200 flex items-start justify-between"
             >
               <div className="space-y-2">
                 <span className="text-[11px] font-bold text-[#521903]/60 uppercase tracking-wider">{stat.title}</span>
@@ -94,11 +86,11 @@ export default function TeacherDashboardMainPage() {
         })}
       </div>
 
-      {/* SECTION 3: CHARTS MATRIX LAYERS */}
+      {/* SECTION 2: GRAPH MONITORING CORE DATA MATRIX */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
         
-        {/* PROGRESS OVER TIME (LINE GRAPH FROM APP FEED) */}
-        <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.04)] lg:col-span-3 flex flex-col justify-between min-h-[320px]">
+        {/* LINE GRAPH: FSL App Telemetry Progress */}
+        <div className="bg-white/80 backdrop-blur-md p-7 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.05)] lg:col-span-3 flex flex-col justify-between min-h-[320px]">
           <div className="flex items-center gap-2 mb-4">
             <TrendingUp className="h-4 w-4 text-amber-700" />
             <h4 className="text-xs font-bold text-[#521903] uppercase tracking-wider">Progress Over Time</h4>
@@ -146,8 +138,8 @@ export default function TeacherDashboardMainPage() {
           </div>
         </div>
 
-        {/* MASTERY PER CLASS GROUP (BAR CHART) */}
-        <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.04)] lg:col-span-2 flex flex-col justify-between min-h-[320px]">
+        {/* BAR CHART: Classroom Mastery Profiles */}
+        <div className="bg-white/80 backdrop-blur-md p-7 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.05)] lg:col-span-2 flex flex-col justify-between min-h-[320px]">
           <div className="space-y-1 mb-4">
             <div className="flex items-center gap-2">
               <BarChart2 className="h-4 w-4 text-amber-700" />
@@ -180,8 +172,8 @@ export default function TeacherDashboardMainPage() {
 
       </div>
 
-      {/* SECTION 4: RECENT LATEST STUDENT LIVE ACTIONS LOG */}
-      <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.04)] space-y-4">
+      {/* SECTION 3: RECENT ACTIVITIES LOG */}
+      <div className="bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.05)] space-y-4">
         <div className="space-y-1 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-amber-700" />

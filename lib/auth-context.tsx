@@ -1,9 +1,7 @@
 'use client'
 
-import React, { createContext, useContext, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import { User, Role, mockCurrentUser, mockFacultyUser, Permission, hasPermission } from './rbac'
-
 
 interface AuthContextType {
   user: User | null
@@ -18,57 +16,76 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter()
-  
-  {/* 
-    FIX 1: Changed initial state from mockCurrentUser to null. 
-    This ensures the app starts unauthenticated and routes to the login page first.
-  */}
   const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true) // Naka-true muna para tingnan ang storage sa simula
+
+  // I-load ang user mula sa localStorage pagka-boot ng system
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedUser = localStorage.getItem('handspeak_user')
+      if (savedUser) {
+        try {
+          setUser(JSON.parse(savedUser))
+        } catch (e) {
+          console.error("Failed to parse saved user state", e)
+        }
+      }
+      setIsLoading(false)
+    }
+  }, [])
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true)
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      await new Promise((resolve) => setTimeout(resolve, 200))
       
-      if (email === 'admin@handspeak.edu' || email === 'john@handspeak.edu') {
+      const sanitizedEmail = email.trim().toLowerCase()
+      console.log("AuthContext evaluating profile session:", sanitizedEmail)
+
+      if (
+        sanitizedEmail === 'mea@handspeak.edu' || 
+        sanitizedEmail === 'admin@handspeak.edu' || 
+        sanitizedEmail === 'john@handspeak.edu'
+      ) {
+        // I-save sa React state AT sa localStorage para hindi mabura sa reload!
         setUser(mockCurrentUser)
-        // Admin folder route
-        router.push('/dashboard/admin')
-      } else if (email === 'faculty@handspeak.edu' || email === 'jane@handspeak.edu') {
-        setUser(mockFacultyUser)
+        localStorage.setItem('handspeak_user', JSON.stringify(mockCurrentUser))
         
-        {/* 
-          THE FIX: Change this route from '/dashboard' to match 
-          your teacher folder structure exactly!
-        */}
-        router.push('/dashboard/teacher')
+        window.location.href = '/dashboard/admin'
+      } else if (
+        sanitizedEmail === 'teacher@handspeak.edu' || 
+        sanitizedEmail === 'faculty@handspeak.edu' || 
+        sanitizedEmail === 'jane@handspeak.edu'
+      ) {
+        setUser(mockFacultyUser)
+        localStorage.setItem('handspeak_user', JSON.stringify(mockFacultyUser))
+        
+        window.location.href = '/dashboard/teacher'
       } else {
         throw new Error('Invalid credentials')
       }
-    } finally {
+    } catch (error) {
       setIsLoading(false)
+      throw error
     }
-  }, [router])
+  }, [])
 
   const logout = useCallback(async () => {
     setIsLoading(true)
     try {
-      // Simulate logout delay
-      await new Promise((resolve) => setTimeout(resolve, 300))
       setUser(null)
-      
-      {/* Updated to /auth/login to match your auth subfolder directory layout structure */}
-      router.push('/auth/login')
+      localStorage.removeItem('handspeak_user')
+      window.location.href = '/auth/login'
     } finally {
       setIsLoading(false)
     }
-  }, [router])
+  }, [])
 
   const switchRole = useCallback((role: Role) => {
     if (user) {
-      setUser({ ...user, role })
+      const updatedUser = { ...user, role }
+      setUser(updatedUser)
+      localStorage.setItem('handspeak_user', JSON.stringify(updatedUser))
     }
   }, [user])
 

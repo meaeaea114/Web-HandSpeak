@@ -1,10 +1,7 @@
+'use client';
+
 import { AuthProvider } from '@/lib/auth-context';
 import '@/app/globals.css';
-
-export const metadata = {
-  title: 'HandSpeak Learning System',
-  description: 'Gamified Filipino Sign Language Learning Platform',
-};
 
 export default function RootLayout({
   children,
@@ -13,8 +10,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        {/* The AuthProvider must wrap the children tree here */}
+      <body className="antialiased overflow-hidden bg-[#F5E6C4]">
         <AuthProvider>
           {children}
         </AuthProvider>
