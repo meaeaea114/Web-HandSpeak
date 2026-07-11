@@ -60,7 +60,8 @@ export const Permission = {
   MANAGE_TEACHERS: 'admin',
   APPROVE_CONTENT: 'admin',
   VIEW_ANALYTICS: 'teacher',
-  MANAGE_GESTURES: 'teacher'
+  MANAGE_GESTURES: 'teacher',
+  MANAGE_ACCOUNT: 'admin',
 } as const;
 
 export { hasAccess as hasPermission };
