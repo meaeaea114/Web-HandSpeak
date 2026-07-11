@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { User, Role, mockCurrentUser, mockFacultyUser, Permission, hasPermission } from './rbac'
 
+
 interface AuthContextType {
   user: User | null
   isLoading: boolean
@@ -18,22 +19,31 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const [user, setUser] = useState<User | null>(mockCurrentUser)
+  
+  {/* 
+    FIX 1: Changed initial state from mockCurrentUser to null. 
+    This ensures the app starts unauthenticated and routes to the login page first.
+  */}
+  const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true)
     try {
-      // Simulate login delay
       await new Promise((resolve) => setTimeout(resolve, 500))
       
-      // Mock authentication - in production, call your auth API
       if (email === 'admin@handspeak.edu' || email === 'john@handspeak.edu') {
         setUser(mockCurrentUser)
-        router.push('/dashboard')
+        // Admin folder route
+        router.push('/dashboard/admin')
       } else if (email === 'faculty@handspeak.edu' || email === 'jane@handspeak.edu') {
         setUser(mockFacultyUser)
-        router.push('/dashboard')
+        
+        {/* 
+          THE FIX: Change this route from '/dashboard' to match 
+          your teacher folder structure exactly!
+        */}
+        router.push('/dashboard/teacher')
       } else {
         throw new Error('Invalid credentials')
       }
@@ -48,7 +58,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Simulate logout delay
       await new Promise((resolve) => setTimeout(resolve, 300))
       setUser(null)
-      router.push('/login')
+      
+      {/* Updated to /auth/login to match your auth subfolder directory layout structure */}
+      router.push('/auth/login')
     } finally {
       setIsLoading(false)
     }

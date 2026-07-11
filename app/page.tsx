@@ -1,9 +1,8 @@
 'use client';
 
-import { useAuth } from '@/lib/auth-context';
-import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { RBAC_CONFIG } from '@/lib/rbac';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 
 export default function RootPage() {
   const { user, isLoading } = useAuth();
@@ -11,18 +10,28 @@ export default function RootPage() {
 
   useEffect(() => {
     if (!isLoading) {
-      if (user) {
-        const destination = RBAC_CONFIG[user.role]?.defaultRedirect || '/auth/login';
-        router.replace(destination);
+      if (!user) {
+        // Automatically boots the app directly into your login portal screen
+        router.push('/auth/login');
+      } else if (user.role === 'admin') {
+        router.push('/dashboard/admin');
       } else {
-        router.replace('/auth/login'); // Changed from /login
+        // Safe root path fallback matching your 225-line workspace view position
+        router.push('/dashboard');
       }
     }
   }, [user, isLoading, router]);
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-background">
-      <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+    <div className="h-screen w-screen flex items-center justify-center bg-[#F5E6C4] bg-cover" style={{ backgroundImage: "url('/bg-parchment.jpg')" }}>
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-12 w-12 rounded-xl bg-[#F8B936] flex items-center justify-center text-[#521903] font-black text-xl shadow-md animate-bounce">
+          HS
+        </div>
+        <p className="font-black text-xs text-[#521903] uppercase tracking-widest animate-pulse">
+          Initializing HandSpeak Pipeline Terminal...
+        </p>
+      </div>
     </div>
   );
 }
