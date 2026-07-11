@@ -6,19 +6,19 @@ import { useEffect } from 'react';
 import { RBAC_CONFIG } from '@/lib/rbac';
 
 export default function RootPage() {
-  const { user, isLoading: loading } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading) {
+    if (!isLoading) {
       if (user) {
         const destination = RBAC_CONFIG[user.role]?.defaultRedirect || '/auth/login';
         router.replace(destination);
       } else {
-        router.replace('/auth/login');
+        router.replace('/auth/login'); // Changed from /login
       }
     }
-  }, [user, loading, router]);
+  }, [user, isLoading, router]);
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
