@@ -15,28 +15,40 @@ export default function LoginPage() {
   const [formData, setFormData] = useState({ name: "", email: "", password: "", rememberMe: false });
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
+  e.preventDefault(); // Keeps the page from reloading
 
   setError("");
   setIsLoading(true);
 
-  const success = await login(
-  formData.email.trim().toLowerCase(),
-  formData.password
-  );
+  try {
+    const success = await login(
+      formData.email.trim().toLowerCase(),
+      formData.password
+    );
 
-  console.log("Login success:", success);
+    console.log("Login success status:", success);
 
-  if (!success) {
-    setError("Invalid email or password.");
+    if (!success) {
+      setError("Invalid email or password.");
+      setIsLoading(false);
+      return;
+    }
+
+    // Move the routing logic inside a standard microtask window to ensure state updates settle
+    const targetEmail = formData.email.trim().toLowerCase();
+    
+    if (targetEmail === "admin@handspeak.edu") {
+      console.log("Routing to Admin...");
+      window.location.href = "/dashboard/admin"; 
+      // TEMPORARY: Use window.location.href instead of useRouter to test if Next.js Router is the breaking point
+    } else {
+      console.log("Routing to Teacher...");
+      window.location.href = "/dashboard/teacher";
+    }
+  } catch (err) {
+    console.error("Login component caught error:", err);
+    setError("An unexpected error occurred.");
     setIsLoading(false);
-    return;
-  }
-
-  if (formData.email === "admin@handspeak.edu") {
-    useRouterInstance.replace("/dashboard/admin");
-  } else {
-    useRouterInstance.replace("/dashboard/teacher");
   }
 };
 
