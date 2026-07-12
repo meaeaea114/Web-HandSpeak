@@ -16,22 +16,38 @@ export function PermissionGate({
   const { user, isLoading } = useAuth();
   const router = useRouter();
 
+  console.log("PermissionGate", {
+    user,
+    isLoading,
+    requiredRole: role,
+});
+
   useEffect(() => {
-    if (isLoading) return;
+  console.log("PermissionGate effect", {
+    user,
+    isLoading,
+    role,
+  });
 
-    if (!user) {
-      router.replace('/auth/login');
-      return;
-    }
+  if (isLoading) return;
 
-    if (user.role !== role) {
-      router.replace(
-        user.role === 'admin'
-          ? '/dashboard/admin'
-          : '/dashboard/teacher'
-      );
-    }
-  }, [user, isLoading, role, router]);
+  if (!user) {
+    console.log("Redirecting to login");
+    router.replace("/auth/login");
+    return;
+  }
+
+  if (user.role !== role) {
+    console.log("Wrong role");
+    router.replace(
+      user.role === "admin"
+        ? "/dashboard/admin"
+        : "/dashboard/teacher"
+    );
+  }
+
+  console.log("Access granted");
+}, [user, isLoading, role, router]);
 
   if (isLoading || !user) {
     return (

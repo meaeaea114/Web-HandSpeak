@@ -20,7 +20,12 @@ export default function LoginPage() {
   setError("");
   setIsLoading(true);
 
-  const success = await login(formData.email, formData.password);
+  const success = await login(
+  formData.email.trim().toLowerCase(),
+  formData.password
+  );
+
+  console.log("Login success:", success);
 
   if (!success) {
     setError("Invalid email or password.");

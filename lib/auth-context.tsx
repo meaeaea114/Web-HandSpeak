@@ -29,27 +29,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   // ADDED FEATURE: Restore current browser session token link on initial terminal launch
   useEffect(() => {
-    try {
-      const storedUser = localStorage.getItem('handspeak_user_session');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
-      }
-    } catch (err) {
-      console.error("HandSpeak Secure Storage Link Restoral Failure:", err);
-    } finally {
-      setIsLoading(false);
+  try {
+    const storedUser = localStorage.getItem("handspeak_user_session");
+
+    if (storedUser) {
+      setUser(JSON.parse(storedUser));
     }
-  }, []);
+  } finally {
+    setInitialized(true);
+    setIsLoading(false);
+  }
+}, []);
+   
 
   // === 3. EXISTING CORE FUNCTIONS WITH ADDED PERSISTENCE ===
   const login = async (email: string, password?: string): Promise<boolean> => {
   setError(null);
 
   let authenticatedUser: User | null = null;
-
+  console.log("Email received:", `"${email}"`);
   if (email === "admin@handspeak.edu") {
     authenticatedUser = {
       id: "1",
@@ -115,6 +117,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
   };
 
+  console.log("AuthProvider render", {
+  user,
+  isLoading,
+}); 
   return (
     <AuthContext.Provider
       value={{
