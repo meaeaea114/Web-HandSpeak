@@ -2,11 +2,16 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import { ArrowLeft, Upload, Check, ChevronRight, ChevronLeft, User, Briefcase, ShieldCheck } from "lucide-react";
 
 export default function RegisterPage() {
+  const router = useRouter();
+  const { login } = useAuth();
   const [activeTab, setActiveTab] = useState("personal");
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   const [formData, setFormData] = useState({
     firstName: "", middleName: "", lastName: "", suffix: "",
@@ -37,7 +42,7 @@ export default function RegisterPage() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.password !== formData.confirmPassword) {
       alert("Passwords do not match!");
@@ -47,7 +52,24 @@ export default function RegisterPage() {
       alert("Please certify your information accuracy before submitting.");
       return;
     }
-    setIsSubmitted(true);
+    
+    setIsLoading(true);
+    try {
+      // Attempt to login with the provided credentials
+      const success = await login(formData.email, formData.password);
+      if (success) {
+        // Auto-redirect to dashboard after successful registration and login
+        router.push("/dashboard");
+      } else {
+        // If login fails, show the success message
+        setIsSubmitted(true);
+      }
+    } catch (error) {
+      console.error("Registration error:", error);
+      setIsSubmitted(true);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const renderTabTrigger = (id: string, label: string, icon: React.ReactNode) => {
@@ -314,24 +336,24 @@ export default function RegisterPage() {
                   </div>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Identification Copy *</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Identification Copy</label>
                       <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100/70 transition-all text-center px-4 shadow-sm">
                         <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
                         <span className="text-xs font-bold text-slate-500 group-hover:text-slate-900 max-w-xs truncate">
                           {files.idCopy ? files.idCopy : "Select ID Scan (PDF/PNG)"}
                         </span>
-                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "idCopy")} required={!files.idCopy} />
+                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "idCopy")} />
                       </label>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Verification Proof Document *</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Verification Proof Document</label>
                       <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100/70 transition-all text-center px-4 shadow-sm">
                         <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
                         <span className="text-xs font-bold text-slate-500 group-hover:text-slate-900 max-w-xs truncate">
                           {files.proofCopy ? files.proofCopy : "Select Documentation Copy"}
                         </span>
-                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "proofCopy")} required={!files.proofCopy} />
+                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "proofCopy")} />
                       </label>
                     </div>
 

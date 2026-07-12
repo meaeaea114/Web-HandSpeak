@@ -15,11 +15,14 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  loading: boolean; // Alias for compatibility
+  isAuthenticated: boolean;
   error: string | null;
   login: (email: string, password?: string) => Promise<boolean>;
   logout: () => Promise<void>;
   updateProfile: (data: Partial<User>) => Promise<boolean>;
   clearError: () => void;
+  hasPermission: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -67,6 +70,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: 'admin@handspeak.edu',
           name: 'System Admin',
           role: 'admin'
+        };
+      } else if (email && email.includes('@')) {
+        // Accept any valid email as a new teacher registration
+        authenticatedUser = {
+          id: 'usr_' + Math.random().toString(36).substr(2, 9),
+          email: email,
+          name: email.split('@')[0],
+          role: 'teacher'
         };
       }
 
@@ -119,16 +130,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
   };
 
+  const hasPermission = (permission: string): boolean => {
+    if (!user) return false;
+    // Simple permission check - can be expanded based on role
+    return true;
+  };
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
+        loading: isLoading,
+        isAuthenticated: !!user,
         error,
         login,
         logout,
         updateProfile,
-        clearError
+        clearError,
+        hasPermission
       }}
     >
       {children}
