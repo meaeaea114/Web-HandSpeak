@@ -4,34 +4,41 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
+
 export default function DashboardPage() {
-  const { user, loading } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading) {
-      if (!user) {
-        // If no user session exists, send them back to login
-        router.push("/auth/login");
-        return;
-      }
+  console.log("Dashboard:", {
+    user,
+    isLoading,
+  });
 
-      // Dynamic redirection based on user roles
-      switch (user.role?.toLowerCase()) {
-        case "admin":
-          router.push("/dashboard/admin");
-          break;
-        case "teacher":
-        case "faculty":
-          router.push("/dashboard/teacher");
-          break;
-        default:
-          // Fallback if it's a student/user or route doesn't exist yet
-          router.push("/"); 
-          break;
-      }
+  if (!isLoading) {
+    if (!user) {
+      console.log("No user -> redirect login");
+      router.push("/auth/login");
+      return;
     }
-  }, [user, loading, router]);
+
+    console.log("User role:", user.role);
+
+    switch (user.role.toLowerCase()) {
+      case "admin":
+        router.push("/dashboard/admin");
+        break;
+
+      case "teacher":
+      case "faculty":
+        router.push("/dashboard/teacher");
+        break;
+
+      default:
+        router.push("/");
+    }
+  }
+}, [user, isLoading, router]);
 
   // Loading state placeholder while evaluating roles
   return (

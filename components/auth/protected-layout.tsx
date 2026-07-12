@@ -10,6 +10,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [isClient, setIsClient] = useState(false);
 
+  console.log("ProtectedLayout", {
+  pathname,
+  user,
+  isLoading,
+});
   // 1. Siguraduhin na client-side lang ito tumatakbo
   useEffect(() => {
     setIsClient(true);

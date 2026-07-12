@@ -46,47 +46,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // === 3. EXISTING CORE FUNCTIONS WITH ADDED PERSISTENCE ===
   const login = async (email: string, password?: string): Promise<boolean> => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      // Maintaining your simulation/API conditional database mapping safely
-      let authenticatedUser: User | null = null;
+  setError(null);
 
-      if (email === 'john@handspeak.edu') {
-        authenticatedUser = {
-          id: 'usr_teacher_01',
-          email: 'john@handspeak.edu',
-          name: 'John Doe',
-          role: 'teacher',
-          avatar: '/images/faculty-card.tsx' // Placeholder mapping
-        };
-      } else if (email === 'admin@handspeak.edu') {
-        authenticatedUser = {
-          id: 'usr_admin_01',
-          email: 'admin@handspeak.edu',
-          name: 'System Admin',
-          role: 'admin'
-        };
-      }
+  let authenticatedUser: User | null = null;
 
-      if (authenticatedUser) {
-        setUser(authenticatedUser);
-        // ADDED FEATURE: Push authenticated profile map to state survival ring
-        localStorage.setItem('handspeak_user_session', JSON.stringify(authenticatedUser));
-        setIsLoading(false);
-        return true;
-      } else {
-        setError('Invalid terminal verification authorization tokens.');
-        setIsLoading(false);
-        return false;
-      }
-    } catch (err) {
-      setError('Core authentication handler failure exception.');
-      setIsLoading(false);
-      return false;
-    }
-  };
+  if (email === "admin@handspeak.edu") {
+    authenticatedUser = {
+      id: "1",
+      name: "System Admin",
+      email: "admin@handspeak.edu",
+      role: "admin",
+    };
+  }
+
+  if (email === "teacher@handspeak.edu") {
+    authenticatedUser = {
+      id: "2",
+      name: "Teacher Faculty",
+      email: "teacher@handspeak.edu",
+      role: "teacher",
+    };
+  }
+
+  if (!authenticatedUser) {
+    setError("Invalid credentials.");
+    return false;
+  }
+
+  localStorage.setItem(
+    "handspeak_user_session",
+    JSON.stringify(authenticatedUser)
+  );
+
+  setUser(authenticatedUser);
+  console.log("Logged in user:", authenticatedUser);
+
+  return true;
+};
 
   const logout = async (): Promise<void> => {
     setIsLoading(true);

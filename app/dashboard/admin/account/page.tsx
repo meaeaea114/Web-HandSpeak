@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth-context'
 import { Permission } from '@/lib/rbac'
 
 export default function AccountManagementPage() {
-  const { hasPermission, user } = useAuth()
+  const { user } = useAuth()
   const [accountData, setAccountData] = useState({
     email: user?.email || 'teacher@handspeak.edu',
     currentPassword: '',
@@ -16,17 +16,6 @@ export default function AccountManagementPage() {
     confirmPassword: '',
     twoFactorEnabled: true,
   })
-
-  if (!hasPermission(Permission.MANAGE_ACCOUNT)) {
-    return (
-      <div className="flex h-96 items-center justify-center">
-        <div className="text-center">
-          <p className="text-lg font-semibold text-foreground">Access Denied</p>
-          <p className="text-sm text-muted-foreground">You don't have permission to manage accounts</p>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-6">

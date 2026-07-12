@@ -95,8 +95,12 @@ export default function TeacherDashboardLayout({
               {user?.email || 'teacher@handspeak.edu'}
             </p>
           </div>
-          <button 
-            onClick={() => logout()}
+
+          <button
+            onClick={async () => {
+            await logout();
+            router.replace("/auth/login");
+            }}
             className="w-full bg-[#521903] hover:bg-[#3D1202] text-white font-bold py-2.5 rounded-xl text-[10px] transition-all cursor-pointer shadow-sm active:scale-[0.97] flex items-center justify-center gap-1.5"
           >
             <LogOut className="h-3 w-3" />

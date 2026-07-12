@@ -15,26 +15,25 @@ export default function LoginPage() {
   const [formData, setFormData] = useState({ name: "", email: "", password: "", rememberMe: false });
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError("");
+  e.preventDefault();
 
-    try {
-      // Connect form credentials directly to your global auth provider state
-      const success = await login(formData.email, formData.password);
-      
-      if (success) {
-        // Pointing to base dashboard route lets your RBAC file process the user's role
-        useRouterInstance.push("/dashboard"); 
-      } else {
-        setError("Invalid email address or password combination.");
-      }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred during authentication.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  setError("");
+  setIsLoading(true);
+
+  const success = await login(formData.email, formData.password);
+
+  if (!success) {
+    setError("Invalid email or password.");
+    setIsLoading(false);
+    return;
+  }
+
+  if (formData.email === "admin@handspeak.edu") {
+    useRouterInstance.replace("/dashboard/admin");
+  } else {
+    useRouterInstance.replace("/dashboard/teacher");
+  }
+};
 
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">

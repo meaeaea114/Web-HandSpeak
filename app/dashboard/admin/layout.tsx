@@ -1,5 +1,6 @@
 "use client";
 
+
 import { PermissionGate } from '@/components/auth/permission-gate';
 import { Header } from '@/components/dashboard/header';
 import Sidebar from '@/components/dashboard/sidebar';
