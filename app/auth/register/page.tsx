@@ -1,592 +1,397 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { ChevronLeft, Upload, AlertCircle, CheckCircle } from 'lucide-react'
-import Link from 'next/link'
-import Image from 'next/image'
-
-type RegistrationStep = 1 | 2 | 3 | 4
-
-interface FormData {
-  // Step 1: Personal Information
-  firstName: string
-  middleName: string
-  lastName: string
-  suffix: string
-  gender: string
-  birthDate: string
-
-  // Step 2: Employment Information
-  employeeId: string
-  position: string
-  department: string
-  gradeLevel: string
-  sections: string[]
-
-  // Step 3: Account Information
-  schoolEmail: string
-  username: string
-  password: string
-  confirmPassword: string
-
-  // Step 4: Verification Documents
-  idCopy: File | null
-  employmentProof: File | null
-  certification: boolean
-}
+import React, { useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, Upload, Check, ChevronRight, ChevronLeft, User, Briefcase, ShieldCheck } from "lucide-react";
 
 export default function RegisterPage() {
-  const [currentStep, setCurrentStep] = useState<RegistrationStep>(1)
-  const [formData, setFormData] = useState<FormData>({
-    firstName: '',
-    middleName: '',
-    lastName: '',
-    suffix: '',
-    gender: '',
-    birthDate: '',
-    employeeId: '',
-    position: '',
-    department: '',
-    gradeLevel: '',
-    sections: [],
-    schoolEmail: '',
-    username: '',
-    password: '',
-    confirmPassword: '',
-    idCopy: null,
-    employmentProof: null,
-    certification: false,
-  })
-  const [error, setError] = useState('')
+  const [activeTab, setActiveTab] = useState("personal");
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  
+  const [formData, setFormData] = useState({
+    firstName: "", middleName: "", lastName: "", suffix: "",
+    gender: "", birthDate: "",
+    employeeId: "", facultyPosition: "", department: "", assignedGrade: "",
+    assignedSections: [] as string[],
+    email: "", username: "", password: "", confirmPassword: "",
+    certify: false
+  });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target
-    setError('')
-    if (type === 'checkbox') {
-      setFormData((prev) => ({
-        ...prev,
-        [name]: (e.target as HTMLInputElement).checked,
-      }))
+  const [files, setFiles] = useState({ idCopy: "", proofCopy: "" });
+  const sectionsList = ["Section Alpha", "Section Beta", "Section Gamma", "Section Delta"];
+
+  const toggleSection = (section: string) => {
+    if (formData.assignedSections.includes(section)) {
+      setFormData({
+        ...formData,
+        assignedSections: formData.assignedSections.filter((s) => s !== section)
+      });
     } else {
-      setFormData((prev) => ({
-        ...prev,
-        [name]: value,
-      }))
+      setFormData({ ...formData, assignedSections: [...formData.assignedSections, section] });
     }
-  }
+  };
 
-  const handleSectionToggle = (section: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      sections: prev.sections.includes(section)
-        ? prev.sections.filter((s) => s !== section)
-        : [...prev.sections, section],
-    }))
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'idCopy' | 'employmentProof') => {
-    if (e.target.files?.[0]) {
-      setFormData((prev) => ({
-        ...prev,
-        [field]: e.target.files![0],
-      }))
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: "idCopy" | "proofCopy") => {
+    if (e.target.files && e.target.files[0]) {
+      setFiles({ ...files, [field]: e.target.files[0].name });
     }
-  }
+  };
 
-  const validateStep = (): boolean => {
-    setError('')
-    
-    if (currentStep === 1) {
-      const missing = []
-      if (!formData.firstName) missing.push('First Name')
-      if (!formData.lastName) missing.push('Last Name')
-      if (!formData.gender) missing.push('Gender')
-      if (!formData.birthDate) missing.push('Birth Date')
-      
-      if (missing.length > 0) {
-        setError(`Missing required fields: ${missing.join(', ')}`)
-        return false
-      }
-    } else if (currentStep === 2) {
-      const missing = []
-      if (!formData.employeeId) missing.push('Employee ID')
-      if (!formData.position) missing.push('Faculty Position')
-      if (!formData.department) missing.push('Department')
-      if (!formData.gradeLevel) missing.push('Grade Level')
-      
-      if (missing.length > 0) {
-        setError(`Missing required fields: ${missing.join(', ')}`)
-        return false
-      }
-      if (formData.sections.length === 0) {
-        setError('Please select at least one section to teach')
-        return false
-      }
-    } else if (currentStep === 3) {
-      const missing = []
-      if (!formData.schoolEmail) missing.push('School Email')
-      if (!formData.username) missing.push('Username')
-      if (!formData.password) missing.push('Password')
-      if (!formData.confirmPassword) missing.push('Password Confirmation')
-      
-      if (missing.length > 0) {
-        setError(`Missing required fields: ${missing.join(', ')}`)
-        return false
-      }
-      
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.schoolEmail)) {
-        setError('Please enter a valid email address')
-        return false
-      }
-      
-      if (formData.password !== formData.confirmPassword) {
-        setError('Passwords do not match. Please check and try again.')
-        return false
-      }
-      if (formData.password.length < 8) {
-        setError('Password must be at least 8 characters for security')
-        return false
-      }
-    } else if (currentStep === 4) {
-      if (!formData.idCopy) {
-        setError('Please upload your Faculty ID copy')
-        return false
-      }
-      if (!formData.employmentProof) {
-        setError('Please upload your Proof of Employment document')
-        return false
-      }
-      if (!formData.certification) {
-        setError('You must certify that all information is accurate and complete')
-        return false
-      }
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (formData.password !== formData.confirmPassword) {
+      alert("Passwords do not match!");
+      return;
     }
-    
-    return true
-  }
-
-  const handleNext = () => {
-    if (validateStep()) {
-      if (currentStep < 4) {
-        setCurrentStep((currentStep + 1) as RegistrationStep)
-      } else {
-        handleSubmit()
-      }
+    if (!formData.certify) {
+      alert("Please certify your information accuracy before submitting.");
+      return;
     }
-  }
+    setIsSubmitted(true);
+  };
 
-  const handlePrevious = () => {
-    if (currentStep > 1) {
-      setCurrentStep((currentStep - 1) as RegistrationStep)
-    }
-  }
+  const renderTabTrigger = (id: string, label: string, icon: React.ReactNode) => {
+    const isActive = activeTab === id;
+    return (
+      <button
+        type="button"
+        onClick={() => setActiveTab(id)}
+        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider transition-all duration-150 ${
+          isActive 
+            ? "bg-amber-950 text-amber-400 shadow-[0_4px_12_rgba(0,0,0,0.15),_inset_0_-2px_0_rgba(0,0,0,0.2)] translate-x-1" 
+            : "text-amber-950/70 hover:bg-amber-950/10 hover:text-amber-950"
+        }`}
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+    );
+  };
 
-  const handleSubmit = async () => {
-    if (!validateStep()) return
+  if (isSubmitted) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center p-4 overflow-x-hidden font-sans antialiased">
+        <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
 
-    try {
-      // Here you would typically send the registration data to your backend
-      console.log('Submitting registration:', formData)
-      // After successful registration, redirect to login
-      window.location.href = '/login?registered=true'
-    } catch (err) {
-      setError('Registration failed. Please try again.')
-    }
+        <div className="w-full max-w-xl bg-white shadow-2xl rounded-[2rem] p-8 text-center border border-slate-100 animate-fadeIn">
+          <div className="w-16 h-16 bg-amber-500 text-slate-950 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+            <ShieldCheck size={32} />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Registration Transmitted</h2>
+          <p className="text-sm text-slate-600 font-medium mb-6 leading-relaxed max-w-md mx-auto">
+            Your credentials have been filed successfully under tracking identifier **{formData.employeeId || "Pending"}**.
+          </p>
+          <Link href="/auth/login" className="inline-flex items-center text-sm font-bold text-slate-955 bg-amber-500 hover:bg-amber-600 px-5 py-2.5 rounded-xl shadow-md transition-all">
+            <ArrowLeft size={16} className="mr-1" /> Return to Portal Access
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-2xl">
-        <div className="bg-primary rounded-3xl p-8 space-y-6">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <Link
-                href="/login"
-                className="flex items-center justify-center h-12 w-12 rounded-full bg-white/20 hover:bg-white/30 transition-colors flex-shrink-0"
-              >
-                <ChevronLeft className="h-6 w-6 text-primary-foreground" />
+    <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
+      {/* Seamless, Non-Blurry Tiled Background Layer */}
+      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
+
+      {/* FIXED HEIGHT MASTER FRAME */}
+      <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
+        
+        {/* Left Side Navigation Control Panel */}
+        <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
+          <img 
+            src="/images/school-building.jpg" 
+            alt="" 
+            className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none select-none opacity-15"
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.3),transparent_70%)] pointer-events-none" />
+          
+          <div className="space-y-6 relative z-10">
+            <div>
+              <Link href="/auth/login" className="inline-flex items-center text-xs font-bold text-amber-955 hover:underline gap-1 transition-all mb-4">
+                <ArrowLeft size={14} /> Cancel Filing Portal
               </Link>
-              <div className="flex items-center gap-3 min-w-0">
-                <Image
-                  src="/logo.png"
-                  alt="HandSpeak Logo"
-                  width={50}
-                  height={50}
-                  className="drop-shadow-lg flex-shrink-0"
-                />
-                <h1 className="text-2xl font-bold text-primary-foreground whitespace-nowrap overflow-hidden text-ellipsis">Faculty Registration Request</h1>
-              </div>
+              <h1 className="text-xl font-black text-amber-955 tracking-tight leading-none">System Enrollment</h1>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-amber-900/60 mt-1">Registration Workspace</p>
             </div>
-            <div className="text-right flex flex-col items-end justify-start flex-shrink-0">
-              <span className="text-sm font-semibold text-primary-foreground leading-none whitespace-nowrap">Step {currentStep} of</span>
-              <span className="text-xl font-bold text-primary-foreground leading-none">4</span>
-            </div>
+
+            <nav className="space-y-2 pt-2">
+              {renderTabTrigger("personal", "Personal Info", <User size={16} />)}
+              {renderTabTrigger("employment", "Employment Data", <Briefcase size={16} />)}
+              {renderTabTrigger("account", "Account Access", <ShieldCheck size={16} />)}
+              {renderTabTrigger("documents", "Verification Link", <Upload size={16} />)}
+            </nav>
           </div>
 
-          {/* Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex gap-1">
-              {[1, 2, 3, 4].map((step) => (
-                <div
-                  key={step}
-                  className={`h-1.5 flex-1 rounded-full transition-all ${
-                    step <= currentStep ? 'bg-white' : 'bg-white/30'
-                  }`}
-                  aria-label={`Step ${step} ${step <= currentStep ? 'completed' : 'pending'}`}
-                />
-              ))}
+          <div className="flex items-center gap-3 relative z-10 pt-6 border-t border-amber-950/10 hidden md:flex">
+            <img src="/logo.png" alt="System Logo" className="h-8 w-auto object-contain bg-amber-955/5 p-1 rounded-lg" />
+            <img src="/images/school-logo.png" alt="School Logo" className="h-8 w-auto object-contain bg-amber-955/5 p-1 rounded-lg" />
+            <div className="text-[9px] font-mono text-amber-955/60 uppercase tracking-widest leading-none font-bold">
+              Dual Security Verified
             </div>
-          </div>
-
-          {/* Form Container */}
-          <div className="bg-white rounded-2xl p-8">
-            {/* Error Message with Better UX */}
-            {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 rounded-lg px-4 py-3 mb-6 flex items-start gap-3" role="alert">
-                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-red-800">Please fix the following:</p>
-                  <p className="text-red-700 text-sm mt-1">{error}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Step 1: Personal Information */}
-            {currentStep === 1 && (
-              <div className="space-y-6">
-                <h2 className="text-lg font-bold text-gray-600 uppercase tracking-wider">PERSONAL INFORMATION</h2>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      First Name *
-                    </label>
-                    <input
-                      type="text"
-                      name="firstName"
-                      value={formData.firstName || ''}
-                      onChange={handleInputChange}
-                      placeholder="Enter first name"
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Middle Name
-                    </label>
-                    <input
-                      type="text"
-                      name="middleName"
-                      value={formData.middleName}
-                      onChange={handleInputChange}
-                      placeholder="Enter middle name"
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Last Name *
-                    </label>
-                    <input
-                      type="text"
-                      name="lastName"
-                      value={formData.lastName}
-                      onChange={handleInputChange}
-                      placeholder="Enter last name"
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Suffix
-                    </label>
-                    <input
-                      type="text"
-                      name="suffix"
-                      value={formData.suffix}
-                      onChange={handleInputChange}
-                      placeholder="e.g. Jr."
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Gender *
-                    </label>
-                    <select
-                      name="gender"
-                      value={formData.gender}
-                      onChange={handleInputChange}
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="">Select Gender</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
-                      <option value="prefer-not">Prefer Not to Say</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Birth Date *
-                    </label>
-                    <input
-                      type="date"
-                      name="birthDate"
-                      value={formData.birthDate}
-                      onChange={handleInputChange}
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Step 2: Employment Information */}
-            {currentStep === 2 && (
-              <div className="space-y-6 max-h-96 overflow-y-auto">
-                <h2 className="text-lg font-bold text-gray-600 uppercase tracking-wider">EMPLOYMENT INFORMATION</h2>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Employee ID *
-                  </label>
-                  <input
-                    type="text"
-                    name="employeeId"
-                    value={formData.employeeId}
-                    onChange={handleInputChange}
-                    placeholder="e.g. EMP-2026-99"
-                    className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Faculty Position *
-                    </label>
-                    <select
-                      name="position"
-                      value={formData.position}
-                      onChange={handleInputChange}
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="">Select Position</option>
-                      <option value="teacher">Teacher</option>
-                      <option value="coordinator">Coordinator</option>
-                      <option value="specialist">Specialist</option>
-                      <option value="assistant">Assistant</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Department *
-                    </label>
-                    <select
-                      name="department"
-                      value={formData.department}
-                      onChange={handleInputChange}
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="">Select Department</option>
-                      <option value="fsl">Foreign Sign Language</option>
-                      <option value="english">English</option>
-                      <option value="special-ed">Special Education</option>
-                      <option value="stem">STEM</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Assigned Grade Level *
-                  </label>
-                  <select
-                    name="gradeLevel"
-                    value={formData.gradeLevel}
-                    onChange={handleInputChange}
-                    className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">Select Grade Level</option>
-                    <option value="k">Kindergarten</option>
-                    <option value="1-2">Grades 1-2</option>
-                    <option value="3-4">Grades 3-4</option>
-                    <option value="5-6">Grades 5-6</option>
-                    <option value="7-8">Grades 7-8</option>
-                    <option value="9-12">Grades 9-12</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Assigned Sections (Multi-select) *
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {['Section Alpha', 'Section Beta', 'Section Gamma', 'Section Delta'].map((section) => (
-                      <label key={section} className="flex items-center gap-2 cursor-pointer p-3 rounded-lg border border-gray-300 hover:bg-gray-50">
-                        <input
-                          type="checkbox"
-                          checked={formData.sections.includes(section)}
-                          onChange={() => handleSectionToggle(section)}
-                          className="w-4 h-4 rounded"
-                        />
-                        <span className="text-sm text-foreground">{section}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Account Information */}
-            {currentStep === 3 && (
-              <div className="space-y-6">
-                <h2 className="text-lg font-bold text-gray-600 uppercase tracking-wider">ACCOUNT INFORMATION</h2>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    School Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    name="schoolEmail"
-                    value={formData.schoolEmail}
-                    onChange={handleInputChange}
-                    placeholder="yourname@school.edu"
-                    className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Username *
-                  </label>
-                  <input
-                    type="text"
-                    name="username"
-                    value={formData.username}
-                    onChange={handleInputChange}
-                    placeholder="fsl_teacher"
-                    className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Password *
-                    </label>
-                    <input
-                      type="password"
-                      name="password"
-                      value={formData.password}
-                      onChange={handleInputChange}
-                      placeholder="••••••••"
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-foreground mb-2">
-                      Confirm Password *
-                    </label>
-                    <input
-                      type="password"
-                      name="confirmPassword"
-                      value={formData.confirmPassword}
-                      onChange={handleInputChange}
-                      placeholder="••••••••"
-                      className="w-full bg-gray-100 rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Step 4: Verification Documents */}
-            {currentStep === 4 && (
-              <div className="space-y-6">
-                <h2 className="text-lg font-bold text-gray-600 uppercase tracking-wider">VERIFICATION DOCUMENTS</h2>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Upload Faculty ID Copy *
-                  </label>
-                  <label className="flex flex-col items-center justify-center w-full px-6 py-8 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
-                    <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                    <span className="text-center">
-                      <span className="text-sm text-gray-600">Select ID Scan (PDF/PNG)</span>
-                      {formData.idCopy && <p className="text-xs text-primary mt-1">{formData.idCopy.name}</p>}
-                    </span>
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={(e) => handleFileChange(e, 'idCopy')}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-foreground mb-2">
-                    Upload Proof of Employment *
-                  </label>
-                  <label className="flex flex-col items-center justify-center w-full px-6 py-8 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
-                    <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                    <span className="text-center">
-                      <span className="text-sm text-gray-600">Select Certificate/Contract Copy</span>
-                      {formData.employmentProof && <p className="text-xs text-primary mt-1">{formData.employmentProof.name}</p>}
-                    </span>
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={(e) => handleFileChange(e, 'employmentProof')}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                <label className="flex items-start gap-3 cursor-pointer p-4 border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <input
-                    type="checkbox"
-                    name="certification"
-                    checked={formData.certification}
-                    onChange={handleInputChange}
-                    className="w-4 h-4 rounded mt-1"
-                  />
-                  <span className="text-sm text-foreground">
-                    I certify that all records correspond exactly to actual structural institutional assignments.
-                  </span>
-                </label>
-              </div>
-            )}
-          </div>
-
-          {/* Navigation Buttons */}
-          <div className="flex gap-4">
-            <button
-              onClick={handlePrevious}
-              disabled={currentStep === 1}
-              className="px-8 py-3 rounded-full font-semibold text-primary-foreground border-2 border-white/30 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Previous Step
-            </button>
-            <button
-              onClick={handleNext}
-              className="ml-auto px-8 py-3 rounded-full font-semibold bg-white text-primary hover:bg-gray-100 transition-colors"
-            >
-              {currentStep === 4 ? 'Transmit Registration Filing' : 'Continue Tracking'}
-            </button>
           </div>
         </div>
+
+        {/* Right Side Input Console Zone */}
+        <div className="md:col-span-8 h-full p-6 sm:p-10 bg-white flex flex-col justify-between overflow-hidden">
+          <form onSubmit={handleSubmit} className="h-full flex flex-col justify-between overflow-hidden">
+            
+            {/* Scroll Area Component */}
+            <div className="flex-1 overflow-y-auto pr-2 max-h-[480px] space-y-6 scrollbar-thin">
+              
+              {/* SECTION 1: PERSONAL INFO */}
+              {activeTab === "personal" && (
+                <div className="space-y-4 animate-fadeIn pt-1">
+                  <div className="mb-2">
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Personal Profile Particulars</h2>
+                    <p className="text-xs font-medium text-slate-400 mt-0.5">Enter core identifiers exactly as printed on identity files.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">First Name *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" required placeholder="First Name" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Middle Name</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" placeholder="Middle Name" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.middleName} onChange={(e) => setFormData({ ...formData, middleName: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Last Name *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" required placeholder="Last Name" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Suffix</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" placeholder="e.g. Jr., III" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.suffix} onChange={(e) => setFormData({ ...formData, suffix: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Gender *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <select required className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer" value={formData.gender} onChange={(e) => setFormData({ ...formData, gender: e.target.value })}>
+                          <option value="">Select Gender</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Other">Prefer not to say</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Birth Date *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="date" required className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.birthDate} onChange={(e) => setFormData({ ...formData, birthDate: e.target.value })} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION 2: EMPLOYMENT DATA */}
+              {activeTab === "employment" && (
+                <div className="space-y-4 animate-fadeIn pt-1">
+                  <div className="mb-2">
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Institutional Profile Scope</h2>
+                    <p className="text-xs font-medium text-slate-400 mt-0.5">Map account visibility variables within systemic role matrices.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">System / Employee ID *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" required placeholder="e.g. EMP-2026-99" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.employeeId} onChange={(e) => setFormData({ ...formData, employeeId: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Portal Position Assignment *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <select required className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer" value={formData.facultyPosition} onChange={(e) => setFormData({ ...formData, facultyPosition: e.target.value })}>
+                          <option value="">Select Assignment</option>
+                          <option value="Instructor">Instructor</option>
+                          <option value="Administrator">Administrator / Staff</option>
+                          <option value="Coordinator">Coordinator</option>
+                          <option value="Specialist">Specialist</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Department Scope *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <select required className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer" value={formData.department} onChange={(e) => setFormData({ ...formData, department: e.target.value })}>
+                          <option value="">Select Department</option>
+                          <option value="CICS">College of Informatics and Computing Sciences</option>
+                          <option value="CTE">College of Teacher Education</option>
+                          <option value="CABEIHM">CABEIHM</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Grade Level *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <select required className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer" value={formData.assignedGrade} onChange={(e) => setFormData({ ...formData, assignedGrade: e.target.value })}>
+                          <option value="">Select Grade Level</option>
+                          <option value="1st Year">1st Year College</option>
+                          <option value="2nd Year">2nd Year College</option>
+                          <option value="3rd Year">3rd Year College</option>
+                          <option value="4th Year">4th Year College</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-2">Assigned Operational Sections *</label>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {sectionsList.map((section) => {
+                          const isSelected = formData.assignedSections.includes(section);
+                          return (
+                            <button
+                              key={section}
+                              type="button"
+                              onClick={() => toggleSection(section)}
+                              className={`px-4 py-3 rounded-xl font-bold text-xs border transition-all flex items-center justify-between shadow-sm ${
+                                isSelected
+                                  ? "bg-amber-500 text-slate-950 border-amber-500 shadow-[0_3px_8px_rgba(245,158,11,0.35),_inset_0_-2px_0_rgba(0,0,0,0.15)] translate-y-[1px]"
+                                  : "bg-slate-50 text-slate-600 border-slate-200 shadow-[1px_2px_2px_rgba(0,0,0,0.04)] hover:bg-slate-100"
+                              }`}
+                            >
+                              <span>{section}</span>
+                              {isSelected && <Check size={14} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION 3: ACCOUNT ACCESS */}
+              {activeTab === "account" && (
+                <div className="space-y-4 animate-fadeIn pt-1">
+                  <div className="mb-2">
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Security Access Profiles</h2>
+                    <p className="text-xs font-medium text-slate-400 mt-0.5">Configure authentication rules and institutional communication nodes.</p>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Institutional Email Address *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="email" required placeholder="user@handspeak.edu" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Username *</label>
+                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                        <input type="text" required placeholder="system_username" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Password *</label>
+                        <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                          <input type="password" required placeholder="••••••••" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Confirm Password *</label>
+                        <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                          <input type="password" required placeholder="••••••••" className="w-full mx-5 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none" value={formData.confirmPassword} onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION 4: VERIFICATION DOCUMENTS */}
+              {activeTab === "documents" && (
+                <div className="space-y-4 animate-fadeIn pt-1">
+                  <div className="mb-2">
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Identity Filing Proof</h2>
+                    <p className="text-xs font-medium text-slate-400 mt-0.5">Attach high-resolution file proofs to finish the system account process request.</p>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Identification Copy *</label>
+                      <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100/70 transition-all text-center px-4 shadow-sm">
+                        <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
+                        <span className="text-xs font-bold text-slate-500 group-hover:text-slate-900 max-w-xs truncate">
+                          {files.idCopy ? files.idCopy : "Select ID Scan (PDF/PNG)"}
+                        </span>
+                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "idCopy")} required={!files.idCopy} />
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Upload Verification Proof Document *</label>
+                      <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100/70 transition-all text-center px-4 shadow-sm">
+                        <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
+                        <span className="text-xs font-bold text-slate-500 group-hover:text-slate-900 max-w-xs truncate">
+                          {files.proofCopy ? files.proofCopy : "Select Documentation Copy"}
+                        </span>
+                        <input type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={(e) => handleFileChange(e, "proofCopy")} required={!files.proofCopy} />
+                      </label>
+                    </div>
+
+                    <label className="flex items-start space-x-2 cursor-pointer select-none border-t border-slate-100 pt-3 mt-2">
+                      <input type="checkbox" className="w-4 h-4 text-amber-500 accent-amber-500 rounded border-slate-300 focus:ring-0 mt-0.5" checked={formData.certify} onChange={(e) => setFormData({ ...formData, certify: e.target.checked })} />
+                      <span className="text-xs font-semibold text-slate-600 leading-relaxed">
+                        I certify that all records correspond exactly to actual dynamic institutional system profiles.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Navigation Buttons Footer */}
+            <div className="flex justify-between items-center border-t border-slate-100 pt-4 bg-white z-10">
+              {activeTab !== "personal" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeTab === "documents") setActiveTab("account");
+                    else if (activeTab === "account") setActiveTab("employment");
+                    else if (activeTab === "employment") setActiveTab("personal");
+                  }}
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 shadow-[0_3px_6px_rgba(0,0,0,0.05),_inset_0_-2px_0_rgba(0,0,0,0.1)] active:translate-y-0.5 active:shadow-inner transition-all duration-100"
+                >
+                  <ChevronLeft size={16} /> Backward Section
+                </button>
+              ) : (
+                <div />
+              )}
+
+              {activeTab !== "documents" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeTab === "personal") setActiveTab("employment");
+                    else if (activeTab === "employment") setActiveTab("account");
+                    else if (activeTab === "account") setActiveTab("documents");
+                  }}
+                  className="inline-flex items-center gap-1 px-5 py-2.5 rounded-xl text-xs font-extrabold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 shadow-[0_4px_12_rgba(245,158,11,0.2),_inset_0_-3px_0_rgba(0,0,0,0.15)] transform active:translate-y-0.5 transition-all duration-100 ml-auto"
+                >
+                  Forward Section <ChevronRight size={16} />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl text-xs font-extrabold text-white bg-slate-900 hover:bg-slate-800 shadow-[0_4px_12_rgba(15,23,42,0.15),_inset_0_-3px_0_rgba(0,0,0,0.2)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 ml-auto"
+                >
+                  Transmit Filing Request
+                </button>
+              )}
+            </div>
+
+          </form>
+        </div>
+
       </div>
     </div>
-  )
+  );
 }

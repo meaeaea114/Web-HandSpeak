@@ -1,162 +1,131 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { ChevronLeft, Mail, AlertCircle, CheckCircle } from 'lucide-react'
-import Link from 'next/link'
-import Image from 'next/image'
+import React, { useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, Mail, ShieldAlert, KeyRound } from "lucide-react";
 
 export default function ForgotPasswordPage() {
-  const [email, setEmail] = useState('')
-  const [submitted, setSubmitted] = useState(false)
-  const [error, setError] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  const [step, setStep] = useState(1); 
+  const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    
-    // Validate email format first
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!email || !emailRegex.test(email)) {
-      setError('Please enter a valid email address')
-      return
-    }
+  const handleSendReset = (e: React.FormEvent) => {
+    e.preventDefault();
+    setStep(2);
+  };
 
-    setIsLoading(true)
-    try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setSubmitted(true)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEmail(e.target.value)
-    setError('')
-  }
+  const handlePasswordUpdate = (e: React.FormEvent) => {
+    e.preventDefault();
+    alert("Password updated successfully!");
+    window.location.href = "/auth/login";
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary via-primary to-primary/90 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-primary rounded-3xl p-8 space-y-6">
-          {/* Header */}
-          <div className="text-center space-y-3">
-            <div className="flex justify-center mb-2">
-              <Image
-                src="/logo.png"
-                alt="HandSpeak Logo"
-                width={60}
-                height={60}
-                priority
-                className="drop-shadow-lg"
-              />
-            </div>
-            <h1 className="text-3xl font-bold text-primary-foreground whitespace-nowrap">Reset Password</h1>
-            <p className="text-primary-foreground/80 text-sm max-w-sm mx-auto">
-              Enter your email address and we&apos;ll send you a link to reset your password
-            </p>
+    <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
+      {/* Seamless Background Anchor Layer */}
+      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
+
+      {/* FIXED HEIGHT MASTER FRAME (Matching Login and Register dimensions exactly) */}
+      <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
+        
+        {/* Left Pane: Campus Image Backdrop with Warm Yellow Glassmorphic Gradient Overlay */}
+        <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative text-amber-955 text-center md:text-left overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
+          {/* Base Layer: School Building Photo */}
+          <img 
+            src="/images/school-building.jpg" 
+            alt="School Campus" 
+            className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none select-none opacity-15"
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.3),transparent_70%)] pointer-events-none" />
+          
+          {/* Symmetrical Logo Arrangement */}
+          <div className="flex items-center justify-center md:justify-start gap-4 relative z-10">
+            <img src="/logo.png" alt="HandSpeak Logo" className="h-16 w-auto object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.15)]" />
+            <div className="h-8 w-[1px] bg-amber-955/20" />
+            <img src="/images/school-logo.png" alt="School Logo" className="h-14 w-auto object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.15)]" />
           </div>
 
-          {!submitted ? (
-            <>
-              {/* Form */}
-              <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Aesthetic Heading Area */}
+          <div className="my-auto md:mb-12 relative z-10 pt-6 md:pt-0">
+            <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight leading-none text-amber-950">
+              Account<br />
+              <span className="text-gradient bg-gradient-to-r from-slate-900 to-slate-800 bg-clip-text text-transparent block mt-1">Recovery</span>
+            </h2>
+          </div>
+
+          <div className="text-[10px] font-mono text-amber-955/60 uppercase tracking-widest relative z-10 hidden md:block font-bold">
+            Dual Security Verified
+          </div>
+        </div>
+
+        {/* Right Pane: 3D Interactive Console */}
+        <div className="md:col-span-8 h-full p-6 sm:p-10 bg-white flex flex-col justify-between overflow-hidden">
+          {/* Centralized inner form grid container layer preventing clipping */}
+          <div className="w-full my-auto space-y-6">
+            <div>
+              <Link href="/auth/login" className="inline-flex items-center text-xs font-bold text-slate-500 hover:text-amber-700 gap-1 mb-4 transition-colors">
+                <ArrowLeft size={14} /> Back to Login
+              </Link>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+                {step === 1 ? "Identify Identity" : "Reset Credentials"}
+              </h1>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                {step === 1 ? "Verify your system identity profile" : "Configure your new secure passcode"}
+              </p>
+            </div>
+
+            {step === 1 ? (
+              <form onSubmit={handleSendReset} className="space-y-5">
+                {/* HCI Safety Notice Box */}
+                <div className="p-4 bg-slate-50 rounded-xl flex items-start gap-2.5 text-slate-600 text-xs font-semibold border border-slate-100 leading-relaxed shadow-[1px_1px_2px_rgba(0,0,0,0.02)]">
+                  <ShieldAlert size={18} className="shrink-0 text-amber-500 mt-0.5" />
+                  <span>Enter your registered profile email address. We will forward a confirmation verification token to safely reset credentials.</span>
+                </div>
+
+                {/* Email Input Field */}
                 <div>
-                  <label className="block text-sm font-semibold text-primary-foreground mb-2">
-                    Email Address *
-                  </label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
                   <div className="relative">
-                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={handleEmailChange}
-                      placeholder="your.email@handspeak.edu"
-                      className="w-full bg-white/90 rounded-2xl pl-12 pr-5 py-3 text-primary-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white"
-                      required
-                    />
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><Mail size={16} /></span>
+                    <input type="email" required placeholder="user@handspeak.edu" className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 text-slate-900 text-sm shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] transition-all" value={email} onChange={e => setEmail(e.target.value)} />
                   </div>
                 </div>
 
-                {/* Error Message */}
-                {error && (
-                  <div className="bg-red-50 border-l-4 border-red-500 rounded-lg px-4 py-3 flex items-start gap-3 text-red-700 text-sm" role="alert">
-                    <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold">Invalid Email</p>
-                      <p className="text-red-600 mt-0.5">{error}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  disabled={isLoading || !email}
-                  className="w-full bg-white/95 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed text-primary font-bold py-3 px-4 rounded-2xl transition-all duration-200 active:scale-95"
-                  aria-busy={isLoading}
-                >
-                  {isLoading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-r-transparent" />
-                      Sending...
-                    </span>
-                  ) : (
-                    'Transmit Security Token'
-                  )}
+                {/* Tactile 3D Action Submit Button */}
+                <button type="submit" className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-950 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_10px_rgba(245,158,11,0.25),_inset_0_-3px_0_rgba(0,0,0,0.1)] transform active:translate-y-[2px] transition-all">
+                  Send Token Code
                 </button>
               </form>
-
-              {/* Back to Login */}
-              <div className="flex items-center justify-center">
-                <Link
-                  href="/login"
-                  className="flex items-center gap-2 text-primary-foreground hover:text-white transition-colors"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Back to Login
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* Success Message */}
-              <div className="bg-green-50 border border-green-200 rounded-lg px-6 py-4 text-center space-y-3" role="status">
-                <div className="flex justify-center mb-2">
-                  <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-                    <CheckCircle className="h-6 w-6 text-green-600" />
+            ) : (
+              <form onSubmit={handlePasswordUpdate} className="space-y-5">
+                {/* Verification Token Field */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Verification Token *</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><KeyRound size={16} /></span>
+                    <input type="text" required placeholder="Enter Token Code" className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 text-slate-900 text-sm shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] transition-all" value={token} onChange={e => setToken(e.target.value)} />
                   </div>
                 </div>
-                <p className="text-green-900 font-semibold text-sm">Password Reset Email Sent</p>
-                <p className="text-green-800 text-sm">
-                  Check your email at <strong>{email}</strong> for a password reset link. The link will expire in 24 hours.
-                </p>
-                <p className="text-green-700 text-xs">
-                  <strong>Tip:</strong> If you don&apos;t see the email, check your spam folder or wait a few minutes.
-                </p>
-              </div>
 
-              {/* Back to Login */}
-              <div className="flex items-center justify-center">
-                <Link
-                  href="/login"
-                  className="flex items-center gap-2 text-primary-foreground hover:text-white transition-colors"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Back to Login
-                </Link>
-              </div>
-            </>
-          )}
+                {/* New Password Field */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">New Password *</label>
+                  <input type="password" required placeholder="••••••••" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 text-slate-900 text-sm shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] transition-all" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                </div>
+
+                {/* Tactile 3D Action Submit Button */}
+                <button type="submit" className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-slate-950 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_10px_rgba(245,158,11,0.25),_inset_0_-3px_0_rgba(0,0,0,0.1)] transform active:translate-y-[2px] transition-all">
+                  Change Password
+                </button>
+              </form>
+            )}
+          </div>
+          {/* Bottom layout buffer layout block */}
+          <div className="w-full h-4" />
         </div>
 
-        {/* Footer */}
-        <div className="text-center mt-6 text-primary-foreground/70 text-xs">
-          <p>HandSpeak Educational Platform</p>
-        </div>
       </div>
     </div>
-  )
+  );
 }
