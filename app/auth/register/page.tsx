@@ -127,7 +127,6 @@ export default function RegisterPage() {
             <img src="/logo.png" alt="System Logo" className="h-8 w-auto object-contain bg-amber-955/5 p-1 rounded-lg" />
             <img src="/images/school-logo.png" alt="School Logo" className="h-8 w-auto object-contain bg-amber-955/5 p-1 rounded-lg" />
             <div className="text-[9px] font-mono text-amber-955/60 uppercase tracking-widest leading-none font-bold">
-              Dual Security Verified
             </div>
           </div>
         </div>

@@ -55,7 +55,6 @@ export default function ForgotPasswordPage() {
           </div>
 
           <div className="text-[10px] font-mono text-amber-955/60 uppercase tracking-widest relative z-10 hidden md:block font-bold">
-            Dual Security Verified
           </div>
         </div>
 

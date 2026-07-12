@@ -1,0 +1,45 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+
+export default function DashboardPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        // If no user session exists, send them back to login
+        router.push("/auth/login");
+        return;
+      }
+
+      // Dynamic redirection based on user roles
+      switch (user.role?.toLowerCase()) {
+        case "admin":
+          router.push("/dashboard/admin");
+          break;
+        case "teacher":
+        case "faculty":
+          router.push("/dashboard/teacher");
+          break;
+        default:
+          // Fallback if it's a student/user or route doesn't exist yet
+          router.push("/"); 
+          break;
+      }
+    }
+  }, [user, loading, router]);
+
+  // Loading state placeholder while evaluating roles
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-2">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+        <p className="text-sm text-muted-foreground">Redirecting to your dashboard...</p>
+      </div>
+    </div>
+  );
+}

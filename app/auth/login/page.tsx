@@ -3,23 +3,37 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context"; // Integrated your HandSpeak Authentication context
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 
 export default function LoginPage() {
   const useRouterInstance = useRouter();
+  const { login } = useAuth(); // Destructured the backend auth provider login method
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(""); // Track local authentication exceptions
   const [formData, setFormData] = useState({ name: "", email: "", password: "", rememberMe: false });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError("");
 
-    // Simulating institutional authentication verification before routing
-    setTimeout(() => {
+    try {
+      // Connect form credentials directly to your global auth provider state
+      const success = await login(formData.email, formData.password);
+      
+      if (success) {
+        // Pointing to base dashboard route lets your RBAC file process the user's role
+        useRouterInstance.push("/dashboard"); 
+      } else {
+        setError("Invalid email address or password combination.");
+      }
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred during authentication.");
+    } finally {
       setIsLoading(false);
-      useRouterInstance.push("/dashboard"); 
-    }, 1000);
+    }
   };
 
   return (
@@ -31,7 +45,7 @@ export default function LoginPage() {
       <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
         
         {/* Left Pane: Campus Image Backdrop with Warm Yellow Glassmorphic Gradient Overlay */}
-        <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative text-amber-950 text-center md:text-left overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
+        <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative text-amber-955 text-center md:text-left overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
           {/* Base Layer: School Building Photo */}
           <img 
             src="/images/school-building.jpg" 
@@ -56,7 +70,6 @@ export default function LoginPage() {
           </div>
 
           <div className="text-[10px] font-mono text-amber-955/60 uppercase tracking-widest relative z-10 hidden md:block font-bold">
-            Dual Security Verified
           </div>
         </div>
 
@@ -141,11 +154,18 @@ export default function LoginPage() {
                 </Link>
               </div>
 
+              {/* Error Message Section */}
+              {error && (
+                <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100">
+                  {error}
+                </div>
+              )}
+
               {/* Premium 3D Action Submit Button with Active Loading State */}
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 flex items-center justify-center bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-950 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_12_slate_rgba(245,158,11,0.3),_inset_0_-4px_0_rgba(0,0,0,0.15)] hover:shadow-[0_2px_5_rgba(245,158,11,0.2),_inset_0_-2px_0_rgba(0,0,0,0.15)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 disabled:opacity-50 disabled:pointer-events-none"
+                className="w-full h-12 flex items-center justify-center bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-950 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3),_inset_0_-4px_0_rgba(0,0,0,0.15)] hover:shadow-[0_2px_5px_rgba(245,158,11,0.2),_inset_0_-2px_0_rgba(0,0,0,0.15)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {isLoading ? "Verifying Profile..." : "Sign In"}
               </button>
