@@ -90,7 +90,6 @@ export default function LoginPage() {
                   <span className="pl-4 text-slate-400"><User size={18} /></span>
                   <input
                     type="text"
-                    required
                     placeholder="John Doe"
                     className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
                     value={formData.name}
