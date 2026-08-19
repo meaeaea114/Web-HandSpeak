@@ -1,67 +1,136 @@
-export type Role = 'admin' | 'teacher';
+export type Role = "admin" | "teacher" | "student";
+
+export type Permission =
+  | "view:admin_dashboard"
+  | "view:teacher_dashboard"
+  | "view:student_dashboard"
+  | "manage:teachers"
+  | "manage:students"
+  | "manage:curriculum"
+  | "approve:content"
+  | "approve:accounts"
+  | "view:analytics"
+  | "export:reports"
+  | "manage:announcements"
+  | "manage:settings"
+  | "evaluate:gestures"
+  | "view:leaderboard"
+  | "submit:feedback";
+
+export type UserStatus = "active" | "pending" | "rejected" | "inactive";
 
 export interface User {
-  id: string;
-  name: string;
+  id: string; // Firebase Auth UID
+  name: string; // Stored Full Name
+  fullName?: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  suffix?: string;
   email: string;
   role: Role;
+  status: UserStatus;
+  department: string;
+  employeeId: string;
+  facultyPosition?: string;
+  assignedGrade: string;
+  assignedSections: string[];
+  avatar?: string;
+  createdAt: string;
+  lastActive: string;
+  rejectionReason?: string;
+  approvedAt?: string;
+  approvedBy?: string;
 }
 
-// Binalangkas ang lahat ng routes para sa parehong roles upang walang maging restriction loop
-export const RBAC_CONFIG = {
+export interface AccountRequest {
+  id: string; // Document ID (matches Firebase UID)
+  requestId: string; // Tracking ID (e.g. REQ-2026-XXXX)
+  uid: string; // Firebase Auth UID
+  fullName: string;
+  firstName: string;
+  middleName?: string;
+  lastName: string;
+  suffix?: string;
+  email: string;
+  employeeId: string;
+  role: Role;
+  facultyPosition: string;
+  department: string;
+  assignedGrade: string;
+  assignedSections: string[];
+  idDocumentUrl: string;
+  idDocumentPath: string;
+  idDocumentName: string;
+  proofDocumentUrl?: string;
+  proofDocumentPath?: string;
+  proofDocumentName?: string;
+  status: UserStatus;
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  approvedAt?: string;
+}
+
+export interface RoleConfig {
+  name: string;
+  description: string;
+  permissions: Permission[];
+  defaultRoute: string;
+}
+
+export const RBAC_CONFIG: Record<Role, RoleConfig> = {
   admin: {
-    allowedRoutes: ['/dashboard/admin'],
-    defaultRedirect: '/dashboard/admin',
+    name: "System Administrator",
+    description: "Full control over accounts, teachers, curriculum, and settings",
+    permissions: [
+      "view:admin_dashboard",
+      "manage:teachers",
+      "manage:students",
+      "manage:curriculum",
+      "approve:content",
+      "approve:accounts",
+      "view:analytics",
+      "export:reports",
+      "manage:announcements",
+      "manage:settings",
+      "evaluate:gestures",
+      "view:leaderboard",
+      "submit:feedback",
+    ],
+    defaultRoute: "/dashboard/admin",
   },
   teacher: {
-    allowedRoutes: [
-      '/dashboard/teacher',
-      '/dashboard/teacher/overview',
-      '/dashboard/teacher/leaderboard',
-      '/dashboard/teacher/analytics',
-      '/dashboard/teacher/reports',
-      '/dashboard/teacher/students',
-      '/dashboard/teacher/content',
-      '/dashboard/teacher/account'
+    name: "Teacher / Faculty",
+    description: "Manage classes, student evaluations, gestures, and reports",
+    permissions: [
+      "view:teacher_dashboard",
+      "manage:students",
+      "manage:curriculum",
+      "view:analytics",
+      "export:reports",
+      "evaluate:gestures",
+      "view:leaderboard",
+      "submit:feedback",
     ],
-    defaultRedirect: '/dashboard/teacher',
+    defaultRoute: "/dashboard/teacher",
   },
-} as const;
+  student: {
+    name: "Student",
+    description: "Access FSL lessons, practice sign language, and view feedback",
+    permissions: [
+      "view:student_dashboard",
+      "evaluate:gestures",
+      "view:leaderboard",
+      "submit:feedback",
+    ],
+    defaultRoute: "/dashboard/teacher",
+  },
+};
 
-export function hasAccess(role: Role, pathname: string): boolean {
-  if (!pathname) return false;
-
-  const config = RBAC_CONFIG[role];
+export function hasPermission(userRole: Role, permission: Permission): boolean {
+  const config = RBAC_CONFIG[userRole];
   if (!config) return false;
-
-  // Pinapahintulutan ang eksaktong tugma o anumang sub-routes sa ilalim nito
-  return config.allowedRoutes.some(route => 
-    pathname === route || pathname.startsWith(`${route}/`)
-  );
+  return config.permissions.includes(permission);
 }
-
-export type Permission = string;
-
-export const mockCurrentUser: User = {
-  id: "1",
-  name: "Mea Angel S. Magpantay",
-  email: "mea@handspeak.edu",
-  role: "admin",
-};
-
-export const mockFacultyUser: User = {
-  id: "2",
-  name: "Teacher Faculty",
-  email: "teacher@handspeak.edu",
-  role: "teacher",
-};
-
-export const Permission = {
-  MANAGE_TEACHERS: 'admin',
-  APPROVE_CONTENT: 'admin',
-  VIEW_ANALYTICS: 'teacher',
-  MANAGE_GESTURES: 'teacher',
-  MANAGE_ACCOUNT: 'admin',
-} as const;
-
-export { hasAccess as hasPermission };

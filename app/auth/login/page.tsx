@@ -3,54 +3,71 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context"; // Integrated your HandSpeak Authentication context
+import { useAuth } from "@/lib/auth-context";
+import { formatAuthError } from "@/lib/auth-service";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 
 export default function LoginPage() {
-  const useRouterInstance = useRouter();
-  const { login } = useAuth(); // Destructured the backend auth provider login method
+  const router = useRouter();
+  const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(""); // Track local authentication exceptions
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", email: "", password: "", rememberMe: false });
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault(); // Keeps the page from reloading
+    e.preventDefault();
+    setError(null);
 
-  setError("");
-  setIsLoading(true);
+    // 1. Trim all inputs
+    const fullNameClean = formData.name.trim();
+    const emailClean = formData.email.trim().toLowerCase();
+    const passwordClean = formData.password.trim();
 
-  try {
-    const success = await login(
-      formData.email.trim().toLowerCase(),
-      formData.password
-    );
-
-    console.log("Login success status:", success);
-
-    if (!success) {
-      setError("Invalid email or password.");
-      setIsLoading(false);
+    // 2. Pre-Firebase Validations
+    if (!fullNameClean) {
+      setError("Please provide your full name.");
       return;
     }
 
-    // Move the routing logic inside a standard microtask window to ensure state updates settle
-    const targetEmail = formData.email.trim().toLowerCase();
-    
-    if (targetEmail === "admin@handspeak.edu") {
-      console.log("Routing to Admin...");
-      window.location.href = "/dashboard/admin"; 
-      // TEMPORARY: Use window.location.href instead of useRouter to test if Next.js Router is the breaking point
-    } else {
-      console.log("Routing to Teacher...");
-      window.location.href = "/dashboard/teacher";
+    if (!emailClean) {
+      setError("Please provide your institutional email address.");
+      return;
     }
-  } catch (err) {
-    console.error("Login component caught error:", err);
-    setError("An unexpected error occurred.");
-    setIsLoading(false);
-  }
-};
+
+    if (!passwordClean) {
+      setError("Please provide your account password.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // 3. Authenticate with Firebase & Verify against Firestore User Record
+      const result = await login(emailClean, formData.password, fullNameClean);
+
+      if (result.success && result.role) {
+        if (result.role === "admin") {
+          router.push("/dashboard/admin");
+        } else if (result.role === "teacher") {
+          router.push("/dashboard/teacher");
+        } else {
+          router.push("/dashboard/teacher");
+        }
+      } else {
+        if (result.error) {
+          setError(formatAuthError(result.error));
+        } else {
+          setError("Access denied. Please verify your credentials and account status.");
+        }
+        setIsLoading(false);
+      }
+    } catch (err: any) {
+      console.error("Sign-in error:", err);
+      setError(formatAuthError(err.code || ""));
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
@@ -108,7 +125,8 @@ export default function LoginPage() {
                     type="text"
                     required
                     placeholder="John Doe"
-                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                    disabled={isLoading}
+                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none disabled:opacity-50"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   />
@@ -124,7 +142,8 @@ export default function LoginPage() {
                     type="email"
                     required
                     placeholder="john@handspeak.edu"
-                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                    disabled={isLoading}
+                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none disabled:opacity-50"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   />
@@ -140,7 +159,8 @@ export default function LoginPage() {
                     type={showPassword ? "text" : "password"}
                     required
                     placeholder="••••••••••••"
-                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                    disabled={isLoading}
+                    className="w-full mx-3 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none disabled:opacity-50"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   />
@@ -172,7 +192,7 @@ export default function LoginPage() {
 
               {/* Error Message Section */}
               {error && (
-                <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100">
+                <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100 animate-shake">
                   {error}
                 </div>
               )}
@@ -181,7 +201,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 flex items-center justify-center bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-950 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3),_inset_0_-4px_0_rgba(0,0,0,0.15)] hover:shadow-[0_2px_5px_rgba(245,158,11,0.2),_inset_0_-2px_0_rgba(0,0,0,0.15)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 disabled:opacity-50 disabled:pointer-events-none"
+                className="w-full h-12 flex items-center justify-center bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-955 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3),_inset_0_-4px_0_rgba(0,0,0,0.15)] hover:shadow-[0_2px_5px_rgba(245,158,11,0.2),_inset_0_-2px_0_rgba(0,0,0,0.15)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {isLoading ? "Verifying Profile..." : "Sign In"}
               </button>

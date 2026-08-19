@@ -11,10 +11,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [isClient, setIsClient] = useState(false);
 
   console.log("ProtectedLayout", {
-  pathname,
-  user,
-  isLoading,
-});
+    pathname,
+    user,
+    isLoading,
+  });
+
   // 1. Siguraduhin na client-side lang ito tumatakbo
   useEffect(() => {
     setIsClient(true);
@@ -30,15 +31,20 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       return;
     }
 
-    // Role-based protection:
-    // Kung admin pero nasa teacher route, ibalik sa admin
-    if (user && pathname.startsWith('/dashboard/teacher') && user.role === 'admin') {
-      router.replace('/dashboard/admin');
-    }
-    
-    // Kung teacher pero nasa admin route, ibalik sa teacher
-    if (user && pathname.startsWith('/dashboard/admin') && (user.role === 'teacher' || user.role === 'faculty')) {
-      router.replace('/dashboard/teacher');
+    if (user) {
+      // Cast user.role as string to safely bypass strict TypeScript type narrowing
+      const role = user.role as string;
+
+      // Role-based protection:
+      // Kung admin pero nasa teacher route, ibalik sa admin
+      if (pathname.startsWith('/dashboard/teacher') && role === 'admin') {
+        router.replace('/dashboard/admin');
+      }
+      
+      // Kung teacher pero nasa admin route, ibalik sa teacher
+      if (pathname.startsWith('/dashboard/admin') && (role === 'teacher' || role === 'faculty')) {
+        router.replace('/dashboard/teacher');
+      }
     }
   }, [user, isLoading, router, pathname, isClient]);
 

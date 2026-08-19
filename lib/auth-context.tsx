@@ -1,136 +1,158 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-
-// === 1. EXISTING INTERFACES & TYPES (UNTOUCHED) ===
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: 'admin' | 'teacher' | 'student' | 'faculty';
-  avatar?: string;
-  createdAt?: string;
-}
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { auth } from "./firebase";
+import { User, Role, Permission, hasPermission, RBAC_CONFIG } from "./rbac";
+import {
+  loginUser,
+  logoutUser,
+  submitAccountRequest,
+  getUserProfile,
+  RegisterRequestPayload as RegisterRequestData,
+} from "./auth-service";
 
 interface AuthContextType {
   user: User | null;
+  firebaseUser: FirebaseUser | null;
+  role: Role | null;
+  isAuthenticated: boolean;
   isLoading: boolean;
-  error: string | null;
-  login: (email: string, password?: string) => Promise<boolean>;
+  login: (email: string, password: string, enteredFullName?: string) => Promise<{ success: boolean; error?: string; status?: string; role?: Role }>;
+  register: (data: RegisterRequestData) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  updateProfile: (data: Partial<User>) => Promise<boolean>;
-  clearError: () => void;
+  can: (permission: Permission) => boolean;
+  permissions: Permission[];
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// === 2. AUTH PROVIDER CORE ===
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [initialized, setInitialized] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // ADDED FEATURE: Restore current browser session token link on initial terminal launch
   useEffect(() => {
-  try {
-    const storedUser = localStorage.getItem("handspeak_user_session");
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
+        // Only active approved users remain authenticated in state
+        if (profile && profile.status === "active") {
+          setFirebaseUser(fbUser);
+          setUser(profile);
+        } else {
+          setFirebaseUser(null);
+          setUser(null);
+        }
+      } else {
+        setFirebaseUser(null);
+        setUser(null);
+      }
+      setIsLoading(false);
+    });
 
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    return () => unsubscribe();
+  }, []);
+
+  const login = useCallback(async (email: string, password: string, enteredFullName?: string) => {
+    try {
+      // 1. Firebase Authentication
+      const fbUser = await loginUser(email, password);
+
+      // 2. Fetch Application User Record by UID
+      const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
+
+      if (!profile) {
+        await logoutUser();
+        return { success: false, error: "Account record not found in system database." };
+      }
+
+      // 3. Full Name Verification Check
+      if (enteredFullName) {
+        const storedName = (profile.fullName || profile.name || "").trim().toLowerCase();
+        const inputName = enteredFullName.trim().toLowerCase();
+
+        if (storedName !== inputName) {
+          await logoutUser();
+          return {
+            success: false,
+            error: "The entered Full Name does not match the record for this account.",
+          };
+        }
+      }
+
+      // 4. Status Check: Pending
+      if (profile.status === "pending") {
+        await logoutUser();
+        return {
+          success: false,
+          status: "pending",
+          error: "Your account is still awaiting administrator approval.",
+        };
+      }
+
+      // 5. Status Check: Rejected / Inactive
+      if (profile.status === "rejected" || profile.status === "inactive") {
+        await logoutUser();
+        return {
+          success: false,
+          status: "rejected",
+          error: "This account has been declined or deactivated by the administrator.",
+        };
+      }
+
+      // 6. Access Approved
+      setUser(profile);
+      setFirebaseUser(fbUser);
+      return { success: true, role: profile.role };
+    } catch (err: any) {
+      return { success: false, error: err.code || err.message };
     }
-  } finally {
-    setInitialized(true);
-    setIsLoading(false);
-  }
-}, []);
-   
+  }, []);
 
-  // === 3. EXISTING CORE FUNCTIONS WITH ADDED PERSISTENCE ===
-  const login = async (email: string, password?: string): Promise<boolean> => {
-  setError(null);
+  const register = useCallback(async (data: RegisterRequestData) => {
+    try {
+      await submitAccountRequest(data);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.code || err.message };
+    }
+  }, []);
 
-  let authenticatedUser: User | null = null;
-  console.log("Email received:", `"${email}"`);
-  if (email === "admin@handspeak.edu") {
-    authenticatedUser = {
-      id: "1",
-      name: "System Admin",
-      email: "admin@handspeak.edu",
-      role: "admin",
-    };
-  }
+  const logout = useCallback(async () => {
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error("Firebase logout error:", err);
+    } finally {
+      setUser(null);
+      setFirebaseUser(null);
+    }
+  }, []);
 
-  if (email === "teacher@handspeak.edu") {
-    authenticatedUser = {
-      id: "2",
-      name: "Teacher Faculty",
-      email: "teacher@handspeak.edu",
-      role: "teacher",
-    };
-  }
-
-  if (!authenticatedUser) {
-    setError("Invalid credentials.");
-    return false;
-  }
-
-  localStorage.setItem(
-    "handspeak_user_session",
-    JSON.stringify(authenticatedUser)
+  const can = useCallback(
+    (permission: Permission): boolean => {
+      if (!user || user.status !== "active") return false;
+      return hasPermission(user.role, permission);
+    },
+    [user]
   );
 
-  setUser(authenticatedUser);
-  console.log("Logged in user:", authenticatedUser);
+  const permissions = user && user.status === "active" ? RBAC_CONFIG[user.role]?.permissions || [] : [];
 
-  return true;
-};
-
-  const logout = async (): Promise<void> => {
-    setIsLoading(true);
-    try {
-      setUser(null);
-      // ADDED FEATURE: Strip access tokens completely from filesystem storage
-      localStorage.removeItem('handspeak_user_session');
-    } catch (err) {
-      console.error("Logout runtime context failure:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const updateProfile = async (data: Partial<User>): Promise<boolean> => {
-    if (!user) return false;
-    try {
-      const updatedUser = { ...user, ...data };
-      setUser(updatedUser);
-      // ADDED FEATURE: Keep localized synchronization mirrors identical
-      localStorage.setItem('handspeak_user_session', JSON.stringify(updatedUser));
-      return true;
-    } catch (err) {
-      setError('Profile update sequence mutation failure.');
-      return false;
-    }
-  };
-
-  const clearError = () => {
-    setError(null);
-  };
-
-  console.log("AuthProvider render", {
-  user,
-  isLoading,
-}); 
   return (
     <AuthContext.Provider
       value={{
         user,
+        firebaseUser,
+        role: user?.role ?? null,
+        isAuthenticated: !!user && !!firebaseUser && user.status === "active",
         isLoading,
-        error,
         login,
+        register,
         logout,
-        updateProfile,
-        clearError
+        can,
+        permissions,
       }}
     >
       {children}
@@ -138,11 +160,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// === 4. EXPORT UTILITY CONSUMER ===
-export function useAuth() {
+export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth framework terminal hooks must run strictly inside an AuthProvider wrapper.');
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 }
