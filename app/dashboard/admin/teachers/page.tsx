@@ -40,9 +40,9 @@ export default function AdminTeachersPage() {
   const loadData = async () => {
     setLoading(true);
     const [teachersData, requestsData] = await Promise.all([
-    getTeachers(),
-    getAccountRequests(),
-]);
+      getTeachers(),
+      getAccountRequests(),
+    ]);
 
     setTeachers(teachersData);
     setPendingRequests(requestsData.filter((request) => request.status === "pending"));

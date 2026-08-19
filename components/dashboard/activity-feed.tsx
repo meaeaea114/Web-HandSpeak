@@ -6,10 +6,8 @@ import {
   UserCheck,
   BookOpen,
   Settings,
-  Shield,
   Clock,
   CheckCircle,
-  Sparkles,
 } from "lucide-react";
 
 export function ActivityFeed() {
@@ -39,8 +37,8 @@ export function ActivityFeed() {
     }
   };
 
-  const getRoleBadge = (role: string) => {
-    switch (role) {
+  const getRoleBadge = (role?: string) => {
+    switch (role?.toLowerCase()) {
       case "admin":
         return "bg-rose-50 text-rose-700 border-rose-200";
       case "teacher":
@@ -79,38 +77,54 @@ export function ActivityFeed() {
       ) : activities.length === 0 ? (
         <div className="text-center py-8 text-slate-400 space-y-1 text-xs">
           <p>No recent activity recorded.</p>
-          <p className="text-[11px] text-slate-300">Actions will appear here as users interact with HandSpeak.</p>
+          <p className="text-[11px] text-slate-300">
+            Actions will appear here as users interact with HandSpeak.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {activities.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100"
-            >
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                {getActionIcon(item.type)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-800 truncate">
-                    {item.userName}
-                  </span>
-                  <span
-                    className={`text-[10px] uppercase font-bold px-1.5 py-0.2 rounded border ${getRoleBadge(
-                      item.userRole
-                    )}`}
-                  >
-                    {item.userRole}
+          {activities.map((item) => {
+            const userName = item.userName || item.user || "System";
+            const userRole = item.userRole || "system";
+            const actionText = item.action || item.title || "Activity";
+            const targetText = item.target || item.description || "";
+
+            return (
+              <div
+                key={item.id}
+                className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100"
+              >
+                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  {getActionIcon(item.type)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-800 truncate">
+                      {userName}
+                    </span>
+                    <span
+                      className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${getRoleBadge(
+                        userRole
+                      )}`}
+                    >
+                      {userRole}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 truncate mt-0.5">
+                    {actionText}
+                    {targetText ? (
+                      <>
+                        : <span className="font-medium text-slate-700">{targetText}</span>
+                      </>
+                    ) : null}
+                  </p>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    {item.timestamp}
                   </span>
                 </div>
-                <p className="text-xs text-slate-600 truncate mt-0.5">
-                  {item.action}: <span className="font-medium text-slate-700">{item.target}</span>
-                </p>
-                <span className="text-[10px] text-slate-400 mt-1 block">{item.timestamp}</span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
