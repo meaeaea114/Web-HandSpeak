@@ -41,6 +41,12 @@ export interface AccountRequestDocument {
   assignedSections: string[];
   username?: string;
 
+  // Contact Information
+  loginEmail?: string;
+  notificationEmail?: string;
+  mobileNumber?: string;
+  school?: string;
+
   // Verification Document (Base64)
   idDocumentName?: string;
   idDocumentPath?: string;
@@ -54,6 +60,34 @@ export interface AccountRequestDocument {
   reviewedAt?: Timestamp | any;
   rejectionReason?: string;
 }
+
+export interface RegistrationRequest {
+  id?: string;
+  // Personal Information
+  firstName: string;
+  middleName?: string;
+  lastName: string;
+  suffix?: string;
+
+  // Contact Information
+  loginEmail: string;          // Primary sign-in email for Firebase Auth
+  notificationEmail: string;   // Secondary notification email
+  mobileNumber: string;        // PH format 09XXXXXXXXX
+
+  // Professional / School Information
+  employeeId: string;
+  school: string;
+  department: string;
+  position: string;
+
+  // Account & Metadata
+  requestedRole: "Teacher";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string | Date;
+  reviewedAt?: string | Date;
+}
+
+const REGISTRATIONS_COLLECTION = "registration_requests";
 
 /**
  * Converts a file directly to a Base64 data string (No Storage CORS issues).
@@ -94,12 +128,16 @@ export async function createAccountRequest(
     lastName: data.lastName || "",
     suffix: data.suffix || "None",
     fullName,
-    email: data.email || "",
-    backupEmail: data.backupEmail || "",
+    email: data.email || data.loginEmail || "",
+    loginEmail: data.loginEmail || data.email || "",
+    notificationEmail: data.notificationEmail || data.backupEmail || "",
+    backupEmail: data.backupEmail || data.notificationEmail || "",
+    mobileNumber: data.mobileNumber || "",
     employeeId: data.employeeId || "",
+    school: data.school || "",
     department: data.department || "Special Education (SPED)",
-    facultyPosition: data.facultyPosition || "Teacher",
-    position: data.facultyPosition || "Teacher",
+    facultyPosition: data.facultyPosition || data.position || "Teacher",
+    position: data.position || data.facultyPosition || "Teacher",
     assignedGrade: data.assignedGrade || "Kindergarten",
     assignedSections: data.assignedSections && data.assignedSections.length > 0 ? data.assignedSections : ["Hope"],
     idDocumentName: data.idDocumentName || "",
@@ -140,6 +178,94 @@ export async function createAccountRequest(
 }
 
 /**
+ * Submit a new teacher registration request to Firebase Firestore (`registration_requests` collection)
+ */
+export async function submitRegistrationRequest(
+  data: Omit<RegistrationRequest, "id" | "status" | "submittedAt" | "requestedRole">
+): Promise<string> {
+  const payload = {
+    ...data,
+    requestedRole: "Teacher",
+    status: "pending",
+    submittedAt: serverTimestamp(),
+  };
+
+  const docRef = await addDoc(collection(db, REGISTRATIONS_COLLECTION), payload);
+  return docRef.id;
+}
+
+/**
+ * Retrieve all registration requests from Firebase Firestore (`registration_requests` collection)
+ */
+export async function getRegistrationRequests(): Promise<RegistrationRequest[]> {
+  try {
+    const q = query(
+      collection(db, REGISTRATIONS_COLLECTION),
+      orderBy("submittedAt", "desc")
+    );
+    
+    const querySnapshot = await getDocs(q);
+    const requests: RegistrationRequest[] = [];
+
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      let submittedAtDate: string = new Date().toISOString();
+
+      if (data.submittedAt instanceof Timestamp) {
+        submittedAtDate = data.submittedAt.toDate().toISOString();
+      } else if (data.submittedAt) {
+        submittedAtDate = new Date(data.submittedAt).toISOString();
+      }
+
+      requests.push({
+        id: docSnap.id,
+        firstName: data.firstName || "",
+        middleName: data.middleName || "",
+        lastName: data.lastName || "",
+        suffix: data.suffix || "",
+        loginEmail: data.loginEmail || "",
+        notificationEmail: data.notificationEmail || "",
+        mobileNumber: data.mobileNumber || "",
+        employeeId: data.employeeId || "",
+        school: data.school || "",
+        department: data.department || "",
+        position: data.position || "",
+        requestedRole: "Teacher",
+        status: data.status || "pending",
+        submittedAt: submittedAtDate,
+      });
+    });
+
+    return requests;
+  } catch (error) {
+    console.error("Error fetching registration requests:", error);
+    return [];
+  }
+}
+
+/**
+ * Approve a teacher registration request in Firebase
+ */
+export async function approveRegistrationRequest(requestId: string): Promise<void> {
+  const requestRef = doc(db, REGISTRATIONS_COLLECTION, requestId);
+  await updateDoc(requestRef, {
+    status: "approved",
+    reviewedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Reject a teacher registration request in Firebase
+ */
+export async function rejectRegistrationRequest(requestId: string): Promise<void> {
+  const requestRef = doc(db, REGISTRATIONS_COLLECTION, requestId);
+  await updateDoc(requestRef, {
+    status: "rejected",
+    reviewedAt: new Date().toISOString(),
+  });
+}
+
+/**
  * Real-time listener for Firestore `accountRequests`.
  */
 export function subscribeToAccountRequests(
@@ -162,9 +288,13 @@ export function subscribeToAccountRequests(
           middleName: d.middleName || "",
           suffix: d.suffix || "None",
           fullName: d.fullName || `${d.firstName || ""} ${d.lastName || ""}`.trim(),
-          email: d.email || "",
-          backupEmail: d.backupEmail || "",
+          email: d.email || d.loginEmail || "",
+          loginEmail: d.loginEmail || d.email || "",
+          notificationEmail: d.notificationEmail || d.backupEmail || "",
+          backupEmail: d.backupEmail || d.notificationEmail || "",
+          mobileNumber: d.mobileNumber || "",
           employeeId: d.employeeId || "",
+          school: d.school || "",
           department: d.department || "Special Education (SPED)",
           facultyPosition: d.facultyPosition || d.position || "Teacher",
           position: d.position || d.facultyPosition || "Teacher",
@@ -216,9 +346,13 @@ export async function getAccountRequests(): Promise<AccountRequestDocument[]> {
         middleName: d.middleName || "",
         suffix: d.suffix || "None",
         fullName: d.fullName || `${d.firstName || ""} ${d.lastName || ""}`.trim(),
-        email: d.email || "",
-        backupEmail: d.backupEmail || "",
+        email: d.email || d.loginEmail || "",
+        loginEmail: d.loginEmail || d.email || "",
+        notificationEmail: d.notificationEmail || d.backupEmail || "",
+        backupEmail: d.backupEmail || d.notificationEmail || "",
+        mobileNumber: d.mobileNumber || "",
         employeeId: d.employeeId || "",
+        school: d.school || "",
         department: d.department || "Special Education (SPED)",
         facultyPosition: d.facultyPosition || d.position || "Teacher",
         position: d.position || d.facultyPosition || "Teacher",
@@ -278,12 +412,16 @@ export async function updateAccountRequestStatus(
         const usersCollection = collection(db, "users");
 
         await addDoc(usersCollection, {
-          email: data.email,
-          backupEmail: data.backupEmail || "",
+          email: data.email || data.loginEmail || "",
+          loginEmail: data.loginEmail || data.email || "",
+          notificationEmail: data.notificationEmail || data.backupEmail || "",
+          backupEmail: data.backupEmail || data.notificationEmail || "",
+          mobileNumber: data.mobileNumber || "",
           firstName: data.firstName || "",
           lastName: data.lastName || "",
           fullName: data.fullName || `${data.firstName || ""} ${data.lastName || ""}`.trim(),
           employeeId: data.employeeId || "",
+          school: data.school || "",
           department: data.department || "",
           facultyPosition: data.facultyPosition || data.position || "Teacher",
           assignedGrade: data.assignedGrade || "",
@@ -400,6 +538,9 @@ export interface TeacherProfile {
   employeeId?: string;
   status?: string;
   role?: string;
+  loginEmail?: string;
+  notificationEmail?: string;
+  mobileNumber?: string;
 }
 
 /**
@@ -419,7 +560,10 @@ export async function getTeachers(): Promise<TeacherProfile[]> {
       teachersList.push({
         id: docSnap.id,
         name: data.fullName || data.name || "Unknown Teacher",
-        email: data.email || "",
+        email: data.email || data.loginEmail || "",
+        loginEmail: data.loginEmail || data.email || "",
+        notificationEmail: data.notificationEmail || data.backupEmail || "",
+        mobileNumber: data.mobileNumber || "",
         department: data.department || "Special Education (SPED)",
         assignedGrade: data.assignedGrade || data.grade || "N/A",
         avatar:
@@ -453,7 +597,10 @@ export async function getTeachers(): Promise<TeacherProfile[]> {
         teachersList.push({
           id: docSnap.id,
           name: data.fullName || data.name || `${data.firstName || ""} ${data.lastName || ""}`.trim() || "Unknown Teacher",
-          email: data.email || "",
+          email: data.email || data.loginEmail || "",
+          loginEmail: data.loginEmail || data.email || "",
+          notificationEmail: data.notificationEmail || data.backupEmail || "",
+          mobileNumber: data.mobileNumber || "",
           department: data.department || "Special Education (SPED)",
           assignedGrade: data.assignedGrade || data.grade || "N/A",
           avatar:

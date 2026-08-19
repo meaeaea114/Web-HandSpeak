@@ -17,6 +17,7 @@ import {
   Plus,
   X,
   FileCheck,
+  Loader2,
 } from "lucide-react";
 import {
   submitAccountRequest,
@@ -28,8 +29,10 @@ import {
   ALLOWED_MIME_TYPES,
 } from "@/lib/auth-service";
 
+type TabType = "personal" | "employment" | "account" | "documents";
+
 export default function RegisterPage() {
-  const [activeTab, setActiveTab] = useState<"personal" | "employment" | "account" | "documents">("personal");
+  const [activeTab, setActiveTab] = useState<TabType>("personal");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submittedTrackingId, setSubmittedTrackingId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -119,19 +122,19 @@ export default function RegisterPage() {
   const handleAddSection = () => {
     const trimmed = newSectionInput.trim().replace(/[^a-zA-Z0-9\s-]/g, "");
     if (trimmed && !formData.assignedSections.includes(trimmed)) {
-      setFormData({
-        ...formData,
-        assignedSections: [...formData.assignedSections, trimmed],
-      });
+      setFormData((prev) => ({
+        ...prev,
+        assignedSections: [...prev.assignedSections, trimmed],
+      }));
       setNewSectionInput("");
     }
   };
 
   const handleRemoveSection = (sectionName: string) => {
-    setFormData({
-      ...formData,
-      assignedSections: formData.assignedSections.filter((s) => s !== sectionName),
-    });
+    setFormData((prev) => ({
+      ...prev,
+      assignedSections: prev.assignedSections.filter((s) => s !== sectionName),
+    }));
   };
 
   const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>, type: "id" | "proof") => {
@@ -157,7 +160,7 @@ export default function RegisterPage() {
     }
   };
 
-  const validateStep = (tab: "personal" | "employment" | "account" | "documents"): boolean => {
+  const validateStep = (tab: TabType): boolean => {
     setError(null);
 
     if (tab === "personal") {
@@ -229,6 +232,13 @@ export default function RegisterPage() {
     else if (activeTab === "account") setActiveTab("documents");
   };
 
+  const handlePrevTab = () => {
+    setError(null);
+    if (activeTab === "documents") setActiveTab("account");
+    else if (activeTab === "account") setActiveTab("employment");
+    else if (activeTab === "employment") setActiveTab("personal");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -278,7 +288,7 @@ export default function RegisterPage() {
     }
   };
 
-  const renderTabTrigger = (id: "personal" | "employment" | "account" | "documents", label: string, icon: React.ReactNode) => {
+  const renderTabTrigger = (id: TabType, label: string, icon: React.ReactNode) => {
     const isActive = activeTab === id;
     return (
       <button
@@ -437,7 +447,7 @@ export default function RegisterPage() {
                         <select
                           className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
                           value={formData.suffix}
-                          onChange={(e) => setFormData({ ...formData, suffix: e.target.value })}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, suffix: e.target.value }))}
                         >
                           <option value="None">None</option>
                           <option value="Jr.">Jr.</option>
@@ -482,7 +492,7 @@ export default function RegisterPage() {
                           required
                           className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
                           value={formData.facultyPosition}
-                          onChange={(e) => setFormData({ ...formData, facultyPosition: e.target.value })}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, facultyPosition: e.target.value }))}
                         >
                           <option value="Teacher">Teacher / Faculty</option>
                           <option value="Lead Teacher">Lead Teacher</option>
@@ -501,7 +511,7 @@ export default function RegisterPage() {
                           required
                           className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
                           value={formData.department}
-                          onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, department: e.target.value }))}
                         >
                           <option value="Special Education (SPED)">Special Education (SPED)</option>
                           <option value="Deaf Education Center">Deaf Education Center</option>
@@ -518,7 +528,7 @@ export default function RegisterPage() {
                           required
                           className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
                           value={formData.assignedGrade}
-                          onChange={(e) => setFormData({ ...formData, assignedGrade: e.target.value })}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, assignedGrade: e.target.value }))}
                         >
                           <option value="Kindergarten">Kindergarten</option>
                           <option value="Grade 1">Grade 1</option>
@@ -609,7 +619,7 @@ export default function RegisterPage() {
                             placeholder="••••••••••••"
                             className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
                             value={formData.password}
-                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
                           />
                           <button
                             type="button"
@@ -629,7 +639,7 @@ export default function RegisterPage() {
                             placeholder="••••••••••••"
                             className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
                             value={formData.confirmPassword}
-                            onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, confirmPassword: e.target.value }))}
                           />
                           <button
                             type="button"
@@ -642,26 +652,27 @@ export default function RegisterPage() {
                       </div>
                     </div>
 
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5 text-xs text-slate-600">
-                      <p className="font-bold text-slate-700 mb-1">Password Requirements:</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                        <span className={`flex items-center gap-1.5 ${hasMinLength ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={hasMinLength ? "text-emerald-600" : "text-slate-300"} /> At least 8 characters
+                    {/* Password Policy Checks */}
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px] space-y-1">
+                      <span className="font-bold text-slate-600 block mb-1">Password Requirements:</span>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <span className={hasMinLength ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {hasMinLength ? "✓" : "•"} Min. 8 characters
                         </span>
-                        <span className={`flex items-center gap-1.5 ${hasUpperCase ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={hasUpperCase ? "text-emerald-600" : "text-slate-300"} /> One uppercase letter (A-Z)
+                        <span className={hasUpperCase ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {hasUpperCase ? "✓" : "•"} Uppercase letter
                         </span>
-                        <span className={`flex items-center gap-1.5 ${hasLowerCase ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={hasLowerCase ? "text-emerald-600" : "text-slate-300"} /> One lowercase letter (a-z)
+                        <span className={hasLowerCase ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {hasLowerCase ? "✓" : "•"} Lowercase letter
                         </span>
-                        <span className={`flex items-center gap-1.5 ${hasNumber ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={hasNumber ? "text-emerald-600" : "text-slate-300"} /> One number (0-9)
+                        <span className={hasNumber ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {hasNumber ? "✓" : "•"} Numeric character
                         </span>
-                        <span className={`flex items-center gap-1.5 ${hasSpecialChar ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={hasSpecialChar ? "text-emerald-600" : "text-slate-300"} /> One special character (!@#$...)
+                        <span className={hasSpecialChar ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {hasSpecialChar ? "✓" : "•"} Special character
                         </span>
-                        <span className={`flex items-center gap-1.5 ${doPasswordsMatch ? "text-emerald-700 font-semibold" : "text-slate-500"}`}>
-                          <Check size={14} className={doPasswordsMatch ? "text-emerald-600" : "text-slate-300"} /> Passwords match
+                        <span className={doPasswordsMatch ? "text-emerald-600 font-medium" : "text-slate-400"}>
+                          {doPasswordsMatch ? "✓" : "•"} Passwords match
                         </span>
                       </div>
                     </div>
@@ -669,30 +680,24 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              {/* 4. IDENTITY PROOFS & CERTIFICATION */}
+              {/* 4. DOCUMENTATION & VERIFICATION */}
               {activeTab === "documents" && (
                 <div className="space-y-4 animate-fadeIn pt-1">
                   <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Identity Verification Documents</h2>
-                    <p className="text-xs font-medium text-slate-400 mt-0.5">Accepted formats: PDF, PNG, JPG • Maximum file size: 5 MB</p>
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Verification Documents</h2>
+                    <p className="text-xs font-medium text-slate-400 mt-0.5">Attach identity and employment proof files for system approval.</p>
                   </div>
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Institutional ID Card Scan / Copy *</label>
-                      <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition-all text-center px-4 shadow-sm">
-                        {idFile ? (
-                          <div className="flex items-center gap-2 text-emerald-700 font-bold text-xs">
-                            <FileCheck size={20} className="text-emerald-600" />
-                            <span className="truncate max-w-xs">{idFile.name} ({(idFile.size / (1024 * 1024)).toFixed(2)} MB)</span>
-                          </div>
-                        ) : (
-                          <>
-                            <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
-                            <span className="text-xs font-bold text-slate-600 truncate max-w-xs">
-                              Select Official School ID File
-                            </span>
-                          </>
-                        )}
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Official ID Card / Badge *
+                      </label>
+                      <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                        <Upload className="w-5 h-5 text-slate-400 mb-1" />
+                        <span className="text-xs font-semibold text-slate-600">
+                          {idFile ? idFile.name : "Click to select or drop official ID file"}
+                        </span>
+                        <span className="text-[10px] text-slate-400 mt-0.5">PDF, PNG, JPG (max 5MB)</span>
                         <input
                           type="file"
                           accept=".pdf,.png,.jpg,.jpeg"
@@ -703,21 +708,15 @@ export default function RegisterPage() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Secondary Employment Proof (Optional)</label>
-                      <label className="group flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition-all text-center px-4 shadow-sm">
-                        {proofFile ? (
-                          <div className="flex items-center gap-2 text-blue-700 font-bold text-xs">
-                            <FileCheck size={20} className="text-blue-600" />
-                            <span className="truncate max-w-xs">{proofFile.name} ({(proofFile.size / (1024 * 1024)).toFixed(2)} MB)</span>
-                          </div>
-                        ) : (
-                          <>
-                            <Upload size={20} className="text-slate-400 group-hover:text-amber-500 transition-all mb-1" />
-                            <span className="text-xs font-bold text-slate-600 truncate max-w-xs">
-                              Upload Appointment Letter or Faculty Certification
-                            </span>
-                          </>
-                        )}
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Proof of Employment / Assignment (Optional)
+                      </label>
+                      <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                        <Upload className="w-5 h-5 text-slate-400 mb-1" />
+                        <span className="text-xs font-semibold text-slate-600">
+                          {proofFile ? proofFile.name : "Click to select support document"}
+                        </span>
+                        <span className="text-[10px] text-slate-400 mt-0.5">PDF, PNG, JPG (max 5MB)</span>
                         <input
                           type="file"
                           accept=".pdf,.png,.jpg,.jpeg"
@@ -727,38 +726,33 @@ export default function RegisterPage() {
                       </label>
                     </div>
 
-                    <label className="flex items-start space-x-2.5 cursor-pointer select-none border-t border-slate-100 pt-3 mt-2">
-                      <input
-                        type="checkbox"
-                        required
-                        className="w-4 h-4 text-amber-500 accent-amber-500 rounded border-slate-300 focus:ring-0 mt-0.5 cursor-pointer"
-                        checked={formData.certify}
-                        onChange={(e) => setFormData({ ...formData, certify: e.target.checked })}
-                      />
-                      <span className="text-xs font-semibold text-slate-600 leading-relaxed">
-                        I certify that I am an authorized school faculty member, all submitted information and credentials are authentic, and I understand that student-data access is restricted and subject to administrator verification.
-                      </span>
-                    </label>
+                    <div className="pt-2">
+                      <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 rounded text-amber-500 focus:ring-amber-400"
+                          checked={formData.certify}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, certify: e.target.checked }))}
+                        />
+                        <span className="text-xs text-slate-600 font-medium leading-tight">
+                          I hereby certify that all provided personal details, position titles, and uploaded identity documents are valid and authentic.
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               )}
-
             </div>
 
-            {/* Navigation Buttons Footer */}
-            <div className="flex justify-between items-center border-t border-slate-100 pt-4 bg-white z-10">
+            {/* Bottom Action Footer Controls */}
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
               {activeTab !== "personal" ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setError(null);
-                    if (activeTab === "documents") setActiveTab("account");
-                    else if (activeTab === "account") setActiveTab("employment");
-                    else if (activeTab === "employment") setActiveTab("personal");
-                  }}
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 shadow-[0_3px_6px_rgba(0,0,0,0.05),_inset_0_-2px_0_rgba(0,0,0,0.1)] active:translate-y-0.5 active:shadow-inner transition-all"
+                  onClick={handlePrevTab}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg transition-all"
                 >
-                  <ChevronLeft size={16} /> Back
+                  <ChevronLeft size={16} /> Previous
                 </button>
               ) : (
                 <div />
@@ -768,24 +762,30 @@ export default function RegisterPage() {
                 <button
                   type="button"
                   onClick={handleNextTab}
-                  className="inline-flex items-center gap-1 px-5 py-2.5 rounded-xl text-xs font-extrabold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 shadow-[0_4px_12px_rgba(245,158,11,0.2),_inset_0_-3px_0_rgba(0,0,0,0.15)] transform active:translate-y-0.5 transition-all ml-auto"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-5 py-2.5 rounded-xl shadow-md transition-all ml-auto"
                 >
-                  Next <ChevronRight size={16} />
+                  Continue <ChevronRight size={16} />
                 </button>
               ) : (
                 <button
                   type="submit"
-                  disabled={isLoading || !isPasswordValid || !doPasswordsMatch}
-                  className="px-6 py-2.5 rounded-xl text-xs font-extrabold text-white bg-slate-900 hover:bg-slate-800 shadow-[0_4px_12px_rgba(15,23,42,0.15),_inset_0_-3px_0_rgba(0,0,0,0.2)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all ml-auto disabled:opacity-50"
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-2 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-6 py-2.5 rounded-xl shadow-md transition-all ml-auto disabled:opacity-50"
                 >
-                  {isLoading ? "Transmitting..." : "Transmit Filing Request"}
+                  {isLoading ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Transmitting...
+                    </>
+                  ) : (
+                    <>
+                      <FileCheck size={16} /> Submit Application
+                    </>
+                  )}
                 </button>
               )}
             </div>
-
           </form>
         </div>
-
       </div>
     </div>
   );

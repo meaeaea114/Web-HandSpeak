@@ -19,7 +19,20 @@ import {
   addDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
-import { User, Role, UserStatus, AccountRequest } from "./rbac";
+import { User, Role as UserRole, Role, UserStatus, AccountRequest, Permission, RBAC_CONFIG } from "./rbac";
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  department?: string;
+  permissions: Permission[];
+  createdAt?: string;
+  lastLogin?: string;
+  status: 'active' | 'pending' | 'suspended';
+  avatarUrl?: string;
+}
 
 export interface RegisterRequestPayload {
   firstName: string;
@@ -144,6 +157,80 @@ export async function checkExistingRegistration(email: string, employeeId: strin
   }
 
   return { exists: false };
+}
+
+/**
+ * Fetch UserProfile using uid and RBAC definitions
+ */
+export async function fetchUserProfile(uid: string): Promise<UserProfile | null> {
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    const userDoc = await getDoc(userDocRef);
+
+    if (userDoc.exists()) {
+      const data = userDoc.data();
+      const role = (data.role as UserRole) || 'student';
+      
+      // Fallback lookup from RBAC_CONFIG for permissions
+      const rolePermissions = RBAC_CONFIG?.[role]?.permissions || [];
+
+      return {
+        uid,
+        email: data.email || '',
+        displayName: data.displayName || data.fullName || data.name || '',
+        role,
+        department: data.department,
+        permissions: rolePermissions,
+        createdAt: data.createdAt,
+        lastLogin: data.lastLogin,
+        status: data.status || 'active',
+        avatarUrl: data.avatar || data.avatarUrl,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    return null;
+  }
+}
+
+/**
+ * Light registration function for ad-hoc user/request creation
+ */
+export async function signUpUser(data: {
+  email: string;
+  password: string;
+  fullName: string;
+  role: UserRole;
+  department?: string;
+  idNumber?: string;
+  reason?: string;
+  schoolId?: string;
+}): Promise<{ uid: string }> {
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, data.email.trim().toLowerCase(), data.password);
+    const uid = userCredential.user.uid;
+
+    const requestDocRef = doc(db, 'accountRequests', uid);
+    await setDoc(requestDocRef, {
+      uid,
+      email: data.email.trim().toLowerCase(),
+      fullName: data.fullName,
+      role: data.role,
+      department: data.department || '',
+      idNumber: data.idNumber || '',
+      reason: data.reason || '',
+      schoolId: data.schoolId || '',
+      status: 'pending',
+      submittedAt: new Date().toISOString().split("T")[0],
+      createdAtServer: serverTimestamp(),
+    });
+
+    return { uid };
+  } catch (error: any) {
+    throw new Error(formatAuthError(error.code || '') || error.message || 'Failed to complete registration request.');
+  }
 }
 
 /**
