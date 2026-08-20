@@ -1,18 +1,16 @@
-'use client';
-
 import { AuthProvider } from '@/lib/auth-context';
-import '@/app/globals.css';
+import { PreferencesProvider } from '@/lib/preferences-context';
+import './globals.css';
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased overflow-hidden bg-[#F5E6C4]">
+      <body className="antialiased">
+        {/* These providers MUST wrap the children so useAuth works everywhere */}
         <AuthProvider>
-          {children}
+          <PreferencesProvider>
+            {children}
+          </PreferencesProvider>
         </AuthProvider>
       </body>
     </html>

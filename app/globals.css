@@ -2,10 +2,10 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-
 @tailwind utilities;
 
-@custom-variant dark (&:is(.dark *));
+/* CRITICAL FIX 1: Allows dark mode to apply to html and body tags themselves */
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --font-heading: var(--font-sans);
@@ -119,19 +119,18 @@
   --sidebar-border: oklch(0.72 0.18 70);
   --sidebar-ring: oklch(0.82 0.21 70);
 }
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-/* Ang track o ang daanan ng scrollbar - transparent para walang "cut edge" boundaries */
 ::-webkit-scrollbar-track {
   background: transparent;
   margin-top: 16px;    
   margin-bottom: 16px; 
 }
 
-/* Ang thumb o yung mismong nahahatak na bar */
 ::-webkit-scrollbar-thumb {
   background: rgba(82, 25, 3, 0.18); 
   border-radius: 100px;              
@@ -139,14 +138,12 @@
   background-clip: padding-box;      
 }
 
-/* Hover state para kapag itinutok ang mouse pointer */
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(82, 25, 3, 0.35); 
   border: 2px solid transparent;     
   background-clip: padding-box;
 }
 
-/* Firefox Support Layouts Matrix */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(82, 25, 3, 0.18) transparent;
@@ -157,9 +154,50 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    /* CRITICAL FIX 2: Removed bg-background so images become visible */
+    @apply text-foreground;
+    background-color: transparent !important;
   }
   html {
     @apply font-sans;
+    background-color: transparent !important;
   }
+}
+
+/* =========================================
+   BACKGROUND THEME OVERRIDES
+   ========================================= */
+body {
+  transition: background-image 0.4s ease-in-out, background-color 0.4s ease-in-out;
+  background-size: cover !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+
+/* Light Mode: Provided light texture */
+html.theme-light body {
+  background-image: url('/image_9aa0c4.jpg') !important;
+  background-color: transparent !important;
+}
+
+/* Dark Mode: Provided dark concrete */
+html.theme-dark body {
+  background-image: url('/image_9aa043.jpg') !important;
+  background-color: transparent !important;
+}
+
+/* System Default: Original HandSpeak parchment */
+html.theme-system body {
+  background-image: url('/bg-parchment.jpg') !important;
+  background-color: transparent !important;
+}
+
+/* CRITICAL FIX 3: Rip away hardcoded backgrounds from layout wrappers */
+body > div, 
+main,
+.min-h-screen, 
+.h-screen {
+  background-color: transparent !important;
+  background-image: none !important;
 }
