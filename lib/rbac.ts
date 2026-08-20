@@ -1,67 +1,100 @@
 export type Role = "admin" | "teacher" | "student";
+export type UserRole = Role;
+export type UserStatus = "active" | "pending" | "rejected" | "archived" | "deactivated" | "suspended";
+
+export type DepartmentType =
+  | "Special Needs Education (SNED)"
+  | "Elementary Education"
+  | "Junior High School"
+  | "Senior High School"
+  | "System Administration";
+
+export type GradeLevel =
+  | "Kindergarten"
+  | "Grade 1"
+  | "Grade 2"
+  | "Grade 3"
+  | "Grade 4"
+  | "Grade 5"
+  | "Grade 6"
+  | "Grade 7"
+  | "Grade 8"
+  | "Grade 9"
+  | "Grade 10"
+  | "Grade 11"
+  | "Grade 12"
+  | "All";
 
 export type Permission =
-  | "view:admin_dashboard"
-  | "view:teacher_dashboard"
-  | "view:student_dashboard"
-  | "manage:teachers"
-  | "manage:students"
-  | "manage:curriculum"
-  | "approve:content"
-  | "approve:accounts"
-  | "view:analytics"
-  | "export:reports"
-  | "manage:announcements"
-  | "manage:settings"
-  | "evaluate:gestures"
-  | "view:leaderboard"
-  | "submit:feedback";
-
-export type UserStatus = "active" | "pending" | "rejected" | "inactive";
+  | "manage_users"
+  | "manage_accounts"
+  | "manage_content"
+  | "manage_announcements"
+  | "view_analytics"
+  | "manage_students"
+  | "manage_classes"
+  | "give_feedback"
+  | "view_feedback"
+  | "access_dictionary"
+  | "access_practice"
+  | "view_leaderboard";
 
 export interface User {
-  id: string; // Firebase Auth UID
-  name: string; // Stored Full Name
+  id: string;
+  name: string;
   fullName?: string;
   firstName?: string;
+  middleInitial?: string;
   middleName?: string;
   lastName?: string;
   suffix?: string;
+  gender?: string;
+  loginEmail?: string;
   email: string;
+  contactNumber?: string;
   role: Role;
   status: UserStatus;
-  department: string;
-  employeeId: string;
-  facultyPosition?: string;
-  assignedGrade: string;
-  assignedSections: string[];
+  department?: string;
+  employeeId?: string;
+  assignedGrade?: string;
+  assignedSections?: string[];
   avatar?: string;
-  createdAt: string;
-  lastActive: string;
-  rejectionReason?: string;
+  createdAt?: string;
+  lastActive?: string;
   approvedAt?: string;
   approvedBy?: string;
+  rejectionReason?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
 }
 
 export interface AccountRequest {
-  id: string; // Document ID (matches Firebase UID)
-  requestId: string; // Tracking ID (e.g. REQ-2026-XXXX)
-  uid: string; // Firebase Auth UID
+  id: string;
+  requestId: string;
+  uid: string;
   fullName: string;
   firstName: string;
+  middleInitial?: string;
   middleName?: string;
   lastName: string;
   suffix?: string;
+  gender?: string;
+  loginEmail?: string;
   email: string;
+  contactNumber?: string;
   employeeId: string;
-  role: Role;
+  role: string;
   facultyPosition: string;
   department: string;
   assignedGrade: string;
   assignedSections: string[];
-  idDocumentUrl: string;
-  idDocumentPath: string;
-  idDocumentName: string;
+  idDocumentUrl?: string;
+  idDocumentPath?: string;
+  idDocumentName?: string;
   proofDocumentUrl?: string;
   proofDocumentPath?: string;
   proofDocumentName?: string;
@@ -69,68 +102,53 @@ export interface AccountRequest {
   submittedAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
-  rejectionReason?: string;
   approvedAt?: string;
+  approvedBy?: string;
+  rejectionReason?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
 }
 
-export interface RoleConfig {
-  name: string;
-  description: string;
-  permissions: Permission[];
-  defaultRoute: string;
-}
-
-export const RBAC_CONFIG: Record<Role, RoleConfig> = {
+export const RBAC_CONFIG: Record<Role, { permissions: Permission[] }> = {
   admin: {
-    name: "System Administrator",
-    description: "Full control over accounts, teachers, curriculum, and settings",
     permissions: [
-      "view:admin_dashboard",
-      "manage:teachers",
-      "manage:students",
-      "manage:curriculum",
-      "approve:content",
-      "approve:accounts",
-      "view:analytics",
-      "export:reports",
-      "manage:announcements",
-      "manage:settings",
-      "evaluate:gestures",
-      "view:leaderboard",
-      "submit:feedback",
+      "manage_users",
+      "manage_accounts",
+      "manage_content",
+      "manage_announcements",
+      "view_analytics",
+      "manage_students",
+      "manage_classes",
+      "view_feedback",
+      "access_dictionary",
+      "access_practice",
+      "view_leaderboard",
     ],
-    defaultRoute: "/dashboard/admin",
   },
   teacher: {
-    name: "Teacher / Faculty",
-    description: "Manage classes, student evaluations, gestures, and reports",
     permissions: [
-      "view:teacher_dashboard",
-      "manage:students",
-      "manage:curriculum",
-      "view:analytics",
-      "export:reports",
-      "evaluate:gestures",
-      "view:leaderboard",
-      "submit:feedback",
+      "manage_students",
+      "manage_classes",
+      "manage_content",
+      "view_analytics",
+      "give_feedback",
+      "access_dictionary",
+      "access_practice",
+      "view_leaderboard",
     ],
-    defaultRoute: "/dashboard/teacher",
   },
   student: {
-    name: "Student",
-    description: "Access FSL lessons, practice sign language, and view feedback",
     permissions: [
-      "view:student_dashboard",
-      "evaluate:gestures",
-      "view:leaderboard",
-      "submit:feedback",
+      "access_dictionary",
+      "access_practice",
+      "give_feedback",
+      "view_leaderboard",
     ],
-    defaultRoute: "/dashboard/teacher",
   },
 };
 
-export function hasPermission(userRole: Role, permission: Permission): boolean {
-  const config = RBAC_CONFIG[userRole];
-  if (!config) return false;
-  return config.permissions.includes(permission);
+export function hasPermission(role: Role, permission: Permission): boolean {
+  return RBAC_CONFIG[role]?.permissions.includes(permission) ?? false;
 }

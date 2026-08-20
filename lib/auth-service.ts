@@ -16,10 +16,9 @@ import {
   where,
   getDocs,
   serverTimestamp,
-  addDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
-import { User, Role as UserRole, Role, UserStatus, AccountRequest, Permission, RBAC_CONFIG } from "./rbac";
+import { User, Role as UserRole, AccountRequest, Permission, RBAC_CONFIG } from "./rbac";
 
 export interface UserProfile {
   uid: string;
@@ -30,16 +29,19 @@ export interface UserProfile {
   permissions: Permission[];
   createdAt?: string;
   lastLogin?: string;
-  status: 'active' | 'pending' | 'suspended';
+  status: 'active' | 'pending' | 'suspended' | 'rejected' | 'archived' | 'deactivated';
   avatarUrl?: string;
 }
 
 export interface RegisterRequestPayload {
   firstName: string;
-  middleName?: string;
+  middleInitial: string;
   lastName: string;
   suffix?: string;
+  gender: string;
+  loginEmail?: string;
   email: string;
+  contactNumber: string;
   password: string;
   employeeId: string;
   facultyPosition: string;
@@ -50,10 +52,10 @@ export interface RegisterRequestPayload {
   proofFile?: File | null;
 }
 
-// 800 KB limit per file to easily fit inside Firestore's 1MB single-document limit
 export const MAX_FILE_SIZE_BYTES = 800 * 1024;
 export const ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
 export const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]{2,50}$/;
+export const MIDDLE_INITIAL_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ]$/;
 export const EMPLOYEE_ID_REGEX = /^[A-Za-z0-9-]{3,20}$/;
 export const APPROVED_INSTITUTIONAL_DOMAINS = ["handspeak.edu", "school.edu.ph", "handspeak.edu.ph"];
 
@@ -84,20 +86,30 @@ export function validateRegistrationPayload(data: RegisterRequestPayload): void 
   if (!NAME_REGEX.test(data.firstName.trim())) {
     throw new Error("First Name must contain letters only (2-50 characters).");
   }
-  if (data.middleName && data.middleName.trim() && !NAME_REGEX.test(data.middleName.trim())) {
-    throw new Error("Middle Name contains invalid characters.");
+  if (!data.middleInitial || !MIDDLE_INITIAL_REGEX.test(data.middleInitial.trim())) {
+    throw new Error("Middle Initial is required and must be a single letter.");
   }
   if (!NAME_REGEX.test(data.lastName.trim())) {
     throw new Error("Last Name must contain letters only (2-50 characters).");
+  }
+  if (!data.gender || !data.gender.trim()) {
+    throw new Error("Gender is required.");
   }
   if (!EMPLOYEE_ID_REGEX.test(data.employeeId.trim())) {
     throw new Error("Employee ID must contain alphanumeric characters and hyphens only.");
   }
 
   const cleanEmail = data.email.trim().toLowerCase();
-  const domain = cleanEmail.split("@")[1];
-  if (!domain || !APPROVED_INSTITUTIONAL_DOMAINS.includes(domain)) {
-    throw new Error(`Please use your official institutional email (e.g. @${APPROVED_INSTITUTIONAL_DOMAINS[0]}).`);
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    throw new Error("Please enter a valid email address containing '@'.");
+  }
+
+  if (data.loginEmail && (!data.loginEmail.trim() || !data.loginEmail.includes("@"))) {
+    throw new Error("Please enter a valid Login Email containing '@'.");
+  }
+
+  if (!data.contactNumber || !data.contactNumber.trim()) {
+    throw new Error("Contact Number is required.");
   }
 
   const password = data.password;
@@ -124,9 +136,6 @@ export function validateRegistrationPayload(data: RegisterRequestPayload): void 
   }
 }
 
-/**
- * Converts a file to base64 data string (100% Free; no Cloud Storage bucket required)
- */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -153,15 +162,12 @@ export async function checkExistingRegistration(email: string, employeeId: strin
       }
     }
   } catch (e) {
-    // Continue to auth creation if restricted
+    // Pass-through check
   }
 
   return { exists: false };
 }
 
-/**
- * Fetch UserProfile using uid and RBAC definitions
- */
 export async function fetchUserProfile(uid: string): Promise<UserProfile | null> {
   try {
     const userDocRef = doc(db, 'users', uid);
@@ -170,8 +176,6 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
     if (userDoc.exists()) {
       const data = userDoc.data();
       const role = (data.role as UserRole) || 'student';
-      
-      // Fallback lookup from RBAC_CONFIG for permissions
       const rolePermissions = RBAC_CONFIG?.[role]?.permissions || [];
 
       return {
@@ -195,35 +199,83 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
   }
 }
 
-/**
- * Light registration function for ad-hoc user/request creation
- */
 export async function signUpUser(data: {
+  firstName: string;
+  middleInitial: string;
+  lastName: string;
+  suffix?: string;
+  gender: string;
   email: string;
+  contactNumber: string;
   password: string;
-  fullName: string;
+  employeeId: string;
+  facultyPosition: string;
+  department: string;
+  assignedGrade: string;
+  assignedSections: string[];
   role: UserRole;
-  department?: string;
-  idNumber?: string;
-  reason?: string;
-  schoolId?: string;
 }): Promise<{ uid: string }> {
   try {
-    const userCredential = await createUserWithEmailAndPassword(auth, data.email.trim().toLowerCase(), data.password);
+    const cleanEmail = data.email.trim().toLowerCase();
+    const cleanEmpId = data.employeeId.trim().toUpperCase();
+    const cleanSuffix = (data.suffix || "").trim();
+    const miFormatted = data.middleInitial.trim().toUpperCase() ? `${data.middleInitial.trim().toUpperCase()}.` : "";
+    const fullName = [data.firstName.trim(), miFormatted, data.lastName.trim(), cleanSuffix]
+      .filter(Boolean)
+      .join(" ");
+
+    const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, data.password);
     const uid = userCredential.user.uid;
+    const dateStr = new Date().toISOString().split("T")[0];
 
     const requestDocRef = doc(db, 'accountRequests', uid);
     await setDoc(requestDocRef, {
       uid,
-      email: data.email.trim().toLowerCase(),
-      fullName: data.fullName,
+      id: uid,
+      requestId: `MAN-${Date.now().toString().slice(-6)}`,
+      fullName,
+      firstName: data.firstName.trim(),
+      middleInitial: data.middleInitial.trim().toUpperCase(),
+      lastName: data.lastName.trim(),
+      suffix: cleanSuffix,
+      gender: data.gender,
+      email: cleanEmail,
+      loginEmail: cleanEmail,
+      contactNumber: data.contactNumber.trim(),
+      employeeId: cleanEmpId,
+      facultyPosition: data.facultyPosition,
+      department: data.department,
+      assignedGrade: data.assignedGrade,
+      assignedSections: data.assignedSections,
       role: data.role,
-      department: data.department || '',
-      idNumber: data.idNumber || '',
-      reason: data.reason || '',
-      schoolId: data.schoolId || '',
-      status: 'pending',
-      submittedAt: new Date().toISOString().split("T")[0],
+      status: 'active',
+      submittedAt: dateStr,
+      approvedAt: dateStr,
+      approvedBy: "System Administrator",
+      createdAtServer: serverTimestamp(),
+    });
+
+    await setDoc(doc(db, 'users', uid), {
+      id: uid,
+      name: fullName,
+      fullName,
+      firstName: data.firstName.trim(),
+      middleInitial: data.middleInitial.trim().toUpperCase(),
+      lastName: data.lastName.trim(),
+      suffix: cleanSuffix,
+      gender: data.gender,
+      email: cleanEmail,
+      loginEmail: cleanEmail,
+      contactNumber: data.contactNumber.trim(),
+      role: data.role,
+      department: data.department,
+      employeeId: cleanEmpId,
+      assignedGrade: data.assignedGrade,
+      assignedSections: data.assignedSections,
+      status: 'active',
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName)}`,
+      createdAt: dateStr,
+      lastActive: "Never",
       createdAtServer: serverTimestamp(),
     });
 
@@ -233,16 +285,15 @@ export async function signUpUser(data: {
   }
 }
 
-/**
- * 100% Free Registration Pipeline using Firestore Document Storage
- */
 export async function submitAccountRequest(data: RegisterRequestPayload): Promise<{ requestId: string; trackingId: string }> {
   validateRegistrationPayload(data);
 
   const cleanEmail = data.email.trim().toLowerCase();
+  const cleanLoginEmail = (data.loginEmail || data.email).trim().toLowerCase();
   const cleanEmpId = data.employeeId.trim().toUpperCase();
-  const suffix = data.suffix && data.suffix !== "None" ? data.suffix.trim() : "";
-  const fullName = [data.firstName.trim(), data.middleName?.trim(), data.lastName.trim(), suffix]
+  const cleanSuffix = (data.suffix || "").trim();
+  const miFormatted = data.middleInitial.trim().toUpperCase() ? `${data.middleInitial.trim().toUpperCase()}.` : "";
+  const fullName = [data.firstName.trim(), miFormatted, data.lastName.trim(), cleanSuffix]
     .filter(Boolean)
     .join(" ");
 
@@ -251,10 +302,10 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
     throw new Error(duplicateCheck.reason);
   }
 
-  // 1. Create Firebase Auth user identity
+  // 1. Create Firebase Auth user identity using Login Email
   let fbUser: FirebaseUser;
   try {
-    const credential = await createUserWithEmailAndPassword(auth, cleanEmail, data.password);
+    const credential = await createUserWithEmailAndPassword(auth, cleanLoginEmail, data.password);
     fbUser = credential.user;
     await updateProfile(fbUser, { displayName: fullName });
   } catch (authErr: any) {
@@ -266,24 +317,27 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
   const trackingId = `REQ-${Date.now().toString().slice(-6)}`;
   const dateStr = new Date().toISOString().split("T")[0];
 
-  // 2. Convert files to base64 Data URLs (Zero cost)
+  // 2. Convert files to base64 Data URLs
   const idDataUrl = await fileToBase64(data.idFile);
   let proofDataUrl = "";
   if (data.proofFile) {
     proofDataUrl = await fileToBase64(data.proofFile);
   }
 
-  // 3. Write document to `accountRequests/{requestId}`
+  // 3. Write complete registration document to `accountRequests/{requestId}`
   const requestDoc: AccountRequest = {
     id: requestId,
     requestId: trackingId,
     uid: requestId,
     fullName,
     firstName: data.firstName.trim(),
-    middleName: data.middleName?.trim() || "",
+    middleInitial: data.middleInitial.trim().toUpperCase(),
     lastName: data.lastName.trim(),
-    suffix,
+    suffix: cleanSuffix,
+    gender: data.gender,
+    loginEmail: cleanLoginEmail,
     email: cleanEmail,
+    contactNumber: data.contactNumber.trim(),
     employeeId: cleanEmpId,
     role: "teacher",
     facultyPosition: data.facultyPosition,
@@ -312,10 +366,13 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
       name: fullName,
       fullName,
       firstName: data.firstName.trim(),
-      middleName: data.middleName?.trim() || "",
+      middleInitial: data.middleInitial.trim().toUpperCase(),
       lastName: data.lastName.trim(),
-      suffix,
+      suffix: cleanSuffix,
+      gender: data.gender,
+      loginEmail: cleanLoginEmail,
       email: cleanEmail,
+      contactNumber: data.contactNumber.trim(),
       role: "teacher",
       status: "pending",
       department: data.department,
@@ -425,12 +482,15 @@ export async function approveAccountRequest(requestId: string, reviewerName: str
     reviewedAt: timestamp,
     reviewedBy: reviewerName,
     approvedAt: timestamp,
+    approvedBy: reviewerName,
   });
 
   await updateDoc(doc(db, "users", reqData.uid), {
     status: "active",
     approvedAt: timestamp,
     approvedBy: reviewerName,
+    reviewedAt: timestamp,
+    reviewedBy: reviewerName,
   });
 }
 
@@ -455,5 +515,55 @@ export async function rejectAccountRequest(requestId: string, reviewerName: stri
   await updateDoc(doc(db, "users", reqData.uid), {
     status: "rejected",
     rejectionReason,
+    reviewedAt: timestamp,
+    reviewedBy: reviewerName,
+  });
+}
+
+export async function archiveAccountRequest(requestId: string, reviewerName: string): Promise<void> {
+  const reqRef = doc(db, "accountRequests", requestId);
+  const reqSnap = await getDoc(reqRef);
+  
+  if (!reqSnap.exists()) {
+    throw new Error("Registration request document does not exist.");
+  }
+  
+  const reqData = reqSnap.data() as AccountRequest;
+  const timestamp = new Date().toISOString().split("T")[0];
+
+  await updateDoc(reqRef, {
+    status: "archived",
+    archivedAt: timestamp,
+    archivedBy: reviewerName,
+  });
+
+  await updateDoc(doc(db, "users", reqData.uid), {
+    status: "archived",
+    archivedAt: timestamp,
+    archivedBy: reviewerName,
+  });
+}
+
+export async function deactivateUserAccount(requestId: string, reviewerName: string): Promise<void> {
+  const reqRef = doc(db, "accountRequests", requestId);
+  const reqSnap = await getDoc(reqRef);
+  
+  if (!reqSnap.exists()) {
+    throw new Error("Account request record not found.");
+  }
+  
+  const reqData = reqSnap.data() as AccountRequest;
+  const timestamp = new Date().toISOString().split("T")[0];
+
+  await updateDoc(reqRef, {
+    status: "deactivated",
+    deactivatedAt: timestamp,
+    deactivatedBy: reviewerName,
+  });
+
+  await updateDoc(doc(db, "users", reqData.uid), {
+    status: "deactivated",
+    deactivatedAt: timestamp,
+    deactivatedBy: reviewerName,
   });
 }

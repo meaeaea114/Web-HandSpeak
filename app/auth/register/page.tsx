@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Upload,
-  Check,
   ChevronRight,
   ChevronLeft,
   User,
@@ -23,8 +22,8 @@ import {
   submitAccountRequest,
   formatAuthError,
   NAME_REGEX,
+  MIDDLE_INITIAL_REGEX,
   EMPLOYEE_ID_REGEX,
-  APPROVED_INSTITUTIONAL_DOMAINS,
   MAX_FILE_SIZE_BYTES,
   ALLOWED_MIME_TYPES,
 } from "@/lib/auth-service";
@@ -40,19 +39,20 @@ export default function RegisterPage() {
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isEmailManuallyEdited, setIsEmailManuallyEdited] = useState(false);
 
   const [formData, setFormData] = useState({
     firstName: "",
-    middleName: "",
+    middleInitial: "",
     lastName: "",
-    suffix: "None",
+    suffix: "",
+    gender: "",
     employeeId: "",
     facultyPosition: "Teacher",
-    department: "Special Education (SPED)",
+    department: "Special Needs Education (SNED)",
     assignedGrade: "Kindergarten",
     assignedSections: [] as string[],
     email: "",
+    contactNumber: "",
     password: "",
     confirmPassword: "",
     certify: false,
@@ -63,7 +63,11 @@ export default function RegisterPage() {
   const [proofFile, setProofFile] = useState<File | null>(null);
 
   const sanitizeNameInput = (input: string): string => {
-    return input.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ\s'-]/g, "");
+    return input.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ\s'.-]/g, "");
+  };
+
+  const sanitizeMiddleInitial = (input: string): string => {
+    return input.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ]/g, "").toUpperCase();
   };
 
   const sanitizeEmployeeIdInput = (input: string): string => {
@@ -72,6 +76,10 @@ export default function RegisterPage() {
 
   const sanitizeEmailInput = (input: string): string => {
     return input.replace(/[^a-zA-Z0-9.@_+-]/g, "").toLowerCase();
+  };
+
+  const sanitizeContactNumber = (input: string): string => {
+    return input.replace(/[^0-9+\-\s()]/g, "");
   };
 
   const hasMinLength = formData.password.length >= 8;
@@ -86,37 +94,14 @@ export default function RegisterPage() {
     hasMinLength && hasUpperCase && hasLowerCase && hasNumber && hasSpecialChar && doesNotContainId;
   const doPasswordsMatch = formData.password.length > 0 && formData.password === formData.confirmPassword;
 
-  const generateEmailSuggestion = (first: string, last: string) => {
-    const cleanFirst = first.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    const cleanLast = last.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (cleanFirst && cleanLast) {
-      return `${cleanFirst}.${cleanLast}@${APPROVED_INSTITUTIONAL_DOMAINS[0]}`;
-    } else if (cleanFirst) {
-      return `${cleanFirst}@${APPROVED_INSTITUTIONAL_DOMAINS[0]}`;
-    }
-    return "";
-  };
-
   const handleFirstNameChange = (val: string) => {
     const sanitized = sanitizeNameInput(val);
-    setFormData((prev) => {
-      const updated = { ...prev, firstName: sanitized };
-      if (!isEmailManuallyEdited) {
-        updated.email = generateEmailSuggestion(sanitized, prev.lastName);
-      }
-      return updated;
-    });
+    setFormData((prev) => ({ ...prev, firstName: sanitized }));
   };
 
   const handleLastNameChange = (val: string) => {
     const sanitized = sanitizeNameInput(val);
-    setFormData((prev) => {
-      const updated = { ...prev, lastName: sanitized };
-      if (!isEmailManuallyEdited) {
-        updated.email = generateEmailSuggestion(prev.firstName, sanitized);
-      }
-      return updated;
-    });
+    setFormData((prev) => ({ ...prev, lastName: sanitized }));
   };
 
   const handleAddSection = () => {
@@ -172,8 +157,12 @@ export default function RegisterPage() {
         setError("First Name must contain letters only (2-50 characters).");
         return false;
       }
-      if (formData.middleName && formData.middleName.trim() && !NAME_REGEX.test(formData.middleName.trim())) {
-        setError("Middle Name contains invalid characters.");
+      if (!formData.middleInitial.trim()) {
+        setError("Middle Initial is required.");
+        return false;
+      }
+      if (!MIDDLE_INITIAL_REGEX.test(formData.middleInitial.trim())) {
+        setError("Middle Initial must be a single letter.");
         return false;
       }
       if (!formData.lastName.trim()) {
@@ -182,6 +171,10 @@ export default function RegisterPage() {
       }
       if (!NAME_REGEX.test(formData.lastName.trim())) {
         setError("Last Name must contain letters only (2-50 characters).");
+        return false;
+      }
+      if (!formData.gender) {
+        setError("Gender is required. Please select an option.");
         return false;
       }
     }
@@ -202,15 +195,16 @@ export default function RegisterPage() {
     }
 
     if (tab === "account") {
-      if (!formData.email.trim()) {
-        setError("Institutional Email Address is required.");
+      if (!formData.email.trim() || !formData.email.includes("@")) {
+        setError("Please enter a valid email address.");
         return false;
       }
-      const domain = formData.email.trim().toLowerCase().split("@")[1];
-      if (!domain || !APPROVED_INSTITUTIONAL_DOMAINS.includes(domain)) {
-        setError(`Please use your official institutional email (e.g. @${APPROVED_INSTITUTIONAL_DOMAINS[0]}).`);
+
+      if (!formData.contactNumber.trim()) {
+        setError("Contact Number is required.");
         return false;
       }
+
       if (!isPasswordValid) {
         setError("Password does not satisfy all complexity requirements.");
         return false;
@@ -264,10 +258,12 @@ export default function RegisterPage() {
     try {
       const response = await submitAccountRequest({
         firstName: formData.firstName,
-        middleName: formData.middleName,
+        middleInitial: formData.middleInitial,
         lastName: formData.lastName,
         suffix: formData.suffix,
+        gender: formData.gender,
         email: formData.email,
+        contactNumber: formData.contactNumber,
         password: formData.password,
         employeeId: formData.employeeId,
         facultyPosition: formData.facultyPosition,
@@ -298,9 +294,9 @@ export default function RegisterPage() {
             setActiveTab(id);
           }
         }}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider transition-all duration-150 ${
+        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-150 ${
           isActive
-            ? "bg-amber-950 text-amber-400 shadow-[0_4px_12px_rgba(0,0,0,0.15),_inset_0_-2px_0_rgba(0,0,0,0.2)] translate-x-1"
+            ? "bg-amber-950 text-amber-400 shadow-[0_4px_12px_rgba(0,0,0,0.15),_inset_0_-2px_0_rgba(0,0,0,0.2)] translate-x-0.5"
             : "text-amber-950/70 hover:bg-amber-950/10 hover:text-amber-950"
         }`}
       >
@@ -311,29 +307,31 @@ export default function RegisterPage() {
   };
 
   if (isSubmitted) {
+    const miFormatted = formData.middleInitial.trim().toUpperCase() ? `${formData.middleInitial.trim().toUpperCase()}.` : "";
     const fullNameDisplay = [
       formData.firstName.trim(),
+      miFormatted,
       formData.lastName.trim(),
-      formData.suffix !== "None" ? formData.suffix : ""
+      formData.suffix.trim()
     ].filter(Boolean).join(" ");
 
     return (
       <div className="relative min-h-screen flex items-center justify-center p-4 overflow-x-hidden font-sans antialiased">
         <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
 
-        <div className="w-full max-w-xl bg-white shadow-2xl rounded-[2rem] p-8 text-center border border-slate-100 animate-fadeIn">
-          <div className="w-16 h-16 bg-amber-500 text-slate-950 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
-            <ShieldCheck size={32} />
+        <div className="w-full max-w-lg bg-white shadow-2xl rounded-3xl p-8 text-center border border-slate-100 animate-fadeIn">
+          <div className="w-14 h-14 bg-amber-500 text-slate-950 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+            <ShieldCheck size={28} />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 mb-2">Registration Transmitted</h2>
-          <p className="text-sm text-slate-600 font-medium mb-6 leading-relaxed max-w-md mx-auto">
-            Account filing received for <strong>{fullNameDisplay}</strong>. Your request is now recorded under Tracking ID <strong className="text-amber-600">{submittedTrackingId}</strong> and is pending administrator review in Account Management.
+          <h2 className="text-xl font-bold text-slate-900 mb-2">Registration Transmitted</h2>
+          <p className="text-xs text-slate-600 font-medium mb-6 leading-relaxed max-w-sm mx-auto">
+            Account filing received for <strong>{fullNameDisplay}</strong>. Your request is recorded under Tracking ID <strong className="text-amber-600">{submittedTrackingId}</strong> and is pending administrator review.
           </p>
           <Link
             href="/auth/login"
-            className="inline-flex items-center text-sm font-bold text-slate-950 bg-amber-500 hover:bg-amber-600 px-5 py-2.5 rounded-xl shadow-md transition-all"
+            className="inline-flex items-center text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-600 px-5 py-2.5 rounded-xl shadow-md transition-all"
           >
-            <ArrowLeft size={16} className="mr-1" /> Return to Portal Access
+            <ArrowLeft size={14} className="mr-1.5" /> Return to Portal Access
           </Link>
         </div>
       </div>
@@ -344,8 +342,8 @@ export default function RegisterPage() {
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
       <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
 
-      {/* FIXED HEIGHT MASTER FRAME */}
-      <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
+      {/* MASTER CONTAINER FRAME */}
+      <div className="w-full max-w-5xl h-[620px] bg-white border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.14)] rounded-3xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
         
         {/* Left Side Navigation Control Panel */}
         <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
@@ -356,37 +354,37 @@ export default function RegisterPage() {
           />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.3),transparent_70%)] pointer-events-none" />
 
-          <div className="space-y-6 relative z-10">
+          <div className="space-y-5 relative z-10">
             <div>
-              <Link href="/auth/login" className="inline-flex items-center text-xs font-bold text-amber-950 hover:underline gap-1 transition-all mb-4">
+              <Link href="/auth/login" className="inline-flex items-center text-xs font-bold text-amber-950 hover:underline gap-1 transition-all mb-3">
                 <ArrowLeft size={14} /> Cancel Registration
               </Link>
               <h1 className="text-xl font-black text-amber-950 tracking-tight leading-none">Faculty Enrollment</h1>
               <p className="text-[10px] font-mono uppercase tracking-wider text-amber-900/70 mt-1">Institutional Workspace</p>
             </div>
 
-            <nav className="space-y-2 pt-2">
-              {renderTabTrigger("personal", "Personal Identity", <User size={16} />)}
-              {renderTabTrigger("employment", "Employment & Scope", <Briefcase size={16} />)}
-              {renderTabTrigger("account", "Account Access", <ShieldCheck size={16} />)}
-              {renderTabTrigger("documents", "Document Upload", <Upload size={16} />)}
+            <nav className="space-y-1.5 pt-1">
+              {renderTabTrigger("personal", "Personal Identity", <User size={15} />)}
+              {renderTabTrigger("employment", "Employment & Scope", <Briefcase size={15} />)}
+              {renderTabTrigger("account", "Account Access", <ShieldCheck size={15} />)}
+              {renderTabTrigger("documents", "Document Upload", <Upload size={15} />)}
             </nav>
           </div>
 
-          <div className="flex items-center gap-3 relative z-10 pt-6 border-t border-amber-950/10 hidden md:flex">
-            <img src="/logo.png" alt="System Logo" className="h-8 w-auto object-contain bg-amber-950/5 p-1 rounded-lg" />
-            <img src="/images/school-logo.png" alt="School Logo" className="h-8 w-auto object-contain bg-amber-950/5 p-1 rounded-lg" />
+          <div className="flex items-center gap-3 relative z-10 pt-4 border-t border-amber-950/10 hidden md:flex">
+            <img src="/logo.png" alt="System Logo" className="h-7 w-auto object-contain bg-amber-950/5 p-1 rounded-lg" />
+            <img src="/images/school-logo.png" alt="School Logo" className="h-7 w-auto object-contain bg-amber-950/5 p-1 rounded-lg" />
           </div>
         </div>
 
         {/* Right Side Input Console Zone */}
-        <div className="md:col-span-8 h-full p-6 sm:p-10 bg-white flex flex-col justify-between overflow-hidden">
+        <div className="md:col-span-8 h-full p-6 sm:p-8 bg-white flex flex-col justify-between overflow-hidden">
           <form onSubmit={handleSubmit} className="h-full flex flex-col justify-between overflow-hidden">
             
-            {/* Scroll Area Component */}
-            <div className="flex-1 overflow-y-auto pr-2 max-h-[480px] space-y-5 scrollbar-thin">
+            {/* Scroll Area with Clean Unified Padding */}
+            <div className="flex-1 overflow-y-auto px-1 sm:px-2 py-1 max-h-[470px] space-y-4 scrollbar-thin">
               {error && (
-                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-rose-800 text-xs font-semibold animate-shake">
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-rose-800 text-xs font-semibold animate-shake">
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-rose-600" />
                   <span>{error}</span>
                 </div>
@@ -394,68 +392,85 @@ export default function RegisterPage() {
 
               {/* 1. PERSONAL INFORMATION */}
               {activeTab === "personal" && (
-                <div className="space-y-4 animate-fadeIn pt-1">
+                <div className="space-y-4 animate-fadeIn">
                   <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Personal Profile Particulars</h2>
-                    <p className="text-xs font-medium text-slate-400 mt-0.5">Letters, spaces, hyphens, and apostrophes only. Numbers are blocked automatically.</p>
+                    <h2 className="text-base font-bold text-slate-900 tracking-tight">Personal Profile Particulars</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Letters, spaces, hyphens, and apostrophes only. Numbers are blocked automatically.</p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3.5">
+                    <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">First Name *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <input
                           type="text"
                           required
                           maxLength={50}
                           placeholder="e.g. Maria"
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none"
                           value={formData.firstName}
                           onChange={(e) => handleFirstNameChange(e.target.value)}
                         />
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Middle Name (Optional)</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Middle Initial *</label>
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <input
                           type="text"
-                          maxLength={50}
-                          placeholder="e.g. Clara"
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
-                          value={formData.middleName}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, middleName: sanitizeNameInput(e.target.value) }))}
+                          required
+                          maxLength={1}
+                          placeholder="C"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none uppercase font-semibold text-center"
+                          value={formData.middleInitial}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, middleInitial: sanitizeMiddleInitial(e.target.value) }))}
                         />
                       </div>
                     </div>
-                    <div>
+
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Suffix (Optional)</label>
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
+                        <input
+                          type="text"
+                          maxLength={15}
+                          placeholder="e.g. Jr."
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none"
+                          value={formData.suffix}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, suffix: sanitizeNameInput(e.target.value) }))}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Last Name *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <input
                           type="text"
                           required
                           maxLength={50}
                           placeholder="e.g. Santos"
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none"
                           value={formData.lastName}
                           onChange={(e) => handleLastNameChange(e.target.value)}
                         />
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Suffix (Optional)</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Gender *</label>
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <select
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
-                          value={formData.suffix}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, suffix: e.target.value }))}
+                          required
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none cursor-pointer"
+                          value={formData.gender}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, gender: e.target.value }))}
                         >
-                          <option value="None">None</option>
-                          <option value="Jr.">Jr.</option>
-                          <option value="Sr.">Sr.</option>
-                          <option value="II">II</option>
-                          <option value="III">III</option>
-                          <option value="IV">IV</option>
-                          <option value="V">V</option>
+                          <option value="">Select Gender</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Prefer not to say">Prefer not to say</option>
                         </select>
                       </div>
                     </div>
@@ -465,68 +480,71 @@ export default function RegisterPage() {
 
               {/* 2. EMPLOYMENT & DATA ACCESS SCOPE */}
               {activeTab === "employment" && (
-                <div className="space-y-4 animate-fadeIn pt-1">
+                <div className="space-y-4 animate-fadeIn">
                   <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Employment Scope & Authorization</h2>
-                    <p className="text-xs font-medium text-slate-400 mt-0.5">Configure institutional department, grade assignment, and student sections.</p>
+                    <h2 className="text-base font-bold text-slate-900 tracking-tight">Employment Scope & Authorization</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Configure institutional department, grade assignment, and student sections.</p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Employee / Personnel ID *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <input
                           type="text"
                           required
                           maxLength={20}
                           placeholder="e.g. EMP-2026-001"
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none font-mono"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none font-mono"
                           value={formData.employeeId}
                           onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: sanitizeEmployeeIdInput(e.target.value) }))}
                         />
                       </div>
                     </div>
+
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Position / Role *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <select
                           required
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none cursor-pointer"
                           value={formData.facultyPosition}
                           onChange={(e) => setFormData((prev) => ({ ...prev, facultyPosition: e.target.value }))}
                         >
-                          <option value="Teacher">Teacher / Faculty</option>
-                          <option value="Lead Teacher">Lead Teacher</option>
-                          <option value="SPED Coordinator">SPED Coordinator</option>
-                          <option value="FSL Specialist">FSL Specialist</option>
+                          <option value="Principal / School Head">Principal / School Head</option>
                           <option value="Department Head">Department Head</option>
-                          <option value="Registrar">Registrar</option>
-                          <option value="Guidance Personnel">Guidance Personnel</option>
+                          <option value="Teacher">Teacher</option>
+                          <option value="SNED Teacher">SNED Teacher</option>
+                          <option value="Guidance Counselor">Guidance Counselor</option>
+                          <option value="School Administrator">School Administrator</option>
+                          <option value="Other">Other</option>
                         </select>
                       </div>
                     </div>
+
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Department *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <select
                           required
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none cursor-pointer"
                           value={formData.department}
                           onChange={(e) => setFormData((prev) => ({ ...prev, department: e.target.value }))}
                         >
-                          <option value="Special Education (SPED)">Special Education (SPED)</option>
-                          <option value="Deaf Education Center">Deaf Education Center</option>
+                          <option value="Special Needs Education (SNED)">Special Needs Education (SNED)</option>
                           <option value="Elementary Education">Elementary Education</option>
                           <option value="Junior High School">Junior High School</option>
                           <option value="Senior High School">Senior High School</option>
                         </select>
                       </div>
                     </div>
+
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Grade Level *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
+                      <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                         <select
                           required
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none cursor-pointer"
+                          className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none cursor-pointer"
                           value={formData.assignedGrade}
                           onChange={(e) => setFormData((prev) => ({ ...prev, assignedGrade: e.target.value }))}
                         >
@@ -546,14 +564,15 @@ export default function RegisterPage() {
                         </select>
                       </div>
                     </div>
+
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Class Section(s) *</label>
                       <div className="flex gap-2 mb-2">
                         <input
                           type="text"
                           maxLength={30}
-                          placeholder="Enter section name (e.g. Hope, Rizal, Section A)"
-                          className="flex-1 px-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-400"
+                          placeholder="Enter section name (e.g. Hope, Rizal)"
+                          className="flex-1 h-11 px-3.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition-all shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)]"
                           value={newSectionInput}
                           onChange={(e) => setNewSectionInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddSection(); } }}
@@ -561,19 +580,19 @@ export default function RegisterPage() {
                         <button
                           type="button"
                           onClick={handleAddSection}
-                          className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 flex items-center gap-1 shadow-sm"
+                          className="h-11 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
                         >
                           <Plus size={14} /> Add Section
                         </button>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1.5 min-h-[30px] p-2 bg-slate-50/70 border border-slate-100 rounded-xl">
                         {formData.assignedSections.length === 0 ? (
-                          <span className="text-xs text-slate-400 italic">No class sections added yet.</span>
+                          <span className="text-[11px] text-slate-400 italic">No class sections added yet.</span>
                         ) : (
                           formData.assignedSections.map((sec) => (
-                            <span key={sec} className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 font-bold text-xs rounded-lg border border-amber-200">
+                            <span key={sec} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100/80 text-amber-900 font-bold text-[11px] rounded-lg border border-amber-200">
                               {sec}
-                              <button type="button" onClick={() => handleRemoveSection(sec)} className="hover:text-rose-600">
+                              <button type="button" onClick={() => handleRemoveSection(sec)} className="hover:text-rose-600 transition-colors">
                                 <X size={12} />
                               </button>
                             </span>
@@ -587,66 +606,83 @@ export default function RegisterPage() {
 
               {/* 3. ACCOUNT CREDENTIALS */}
               {activeTab === "account" && (
-                <div className="space-y-4 animate-fadeIn pt-1">
+                <div className="space-y-4 animate-fadeIn">
                   <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Security Credentials</h2>
-                    <p className="text-xs font-medium text-slate-400 mt-0.5">Use your official institutional email for system identification.</p>
+                    <h2 className="text-base font-bold text-slate-900 tracking-tight">Security Credentials</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Use your official email address for system identification and notifications.</p>
                   </div>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Institutional Email Address *</label>
-                      <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400">
-                        <input
-                          type="email"
-                          required
-                          placeholder={`name@${APPROVED_INSTITUTIONAL_DOMAINS[0]}`}
-                          className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
-                          value={formData.email}
-                          onChange={(e) => {
-                            setIsEmailManuallyEdited(true);
-                            setFormData((prev) => ({ ...prev, email: sanitizeEmailInput(e.target.value) }));
-                          }}
-                        />
+
+                  <div className="space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Email Address *</label>
+                        <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
+                          <input
+                            type="email"
+                            required
+                            placeholder="e.g. yourname@email.com"
+                            className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none"
+                            value={formData.email}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, email: sanitizeEmailInput(e.target.value) }))}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Contact Number *</label>
+                        <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
+                          <input
+                            type="tel"
+                            required
+                            maxLength={20}
+                            placeholder="e.g. +63 912 345 6789"
+                            className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none"
+                            value={formData.contactNumber}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, contactNumber: sanitizeContactNumber(e.target.value) }))}
+                          />
+                        </div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                       <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1">Password *</label>
-                        <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400 pr-4">
+                        <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                           <input
                             type={showPassword ? "text" : "password"}
                             required
                             placeholder="••••••••••••"
-                            className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                            className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none pr-2"
                             value={formData.password}
                             onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
                           />
                           <button
                             type="button"
-                            className="text-slate-400 hover:text-slate-600 focus:outline-none"
+                            className="text-slate-400 hover:text-slate-600 focus:outline-none flex-shrink-0"
                             onClick={() => setShowPassword(!showPassword)}
                           >
-                            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                           </button>
                         </div>
                       </div>
+
                       <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1">Confirm Password *</label>
-                        <div className="w-full h-12 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus-within:ring-2 focus-within:ring-amber-400 pr-4">
+                        <div className="w-full h-11 flex items-center bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 px-3.5 transition-all">
                           <input
                             type={showConfirmPassword ? "text" : "password"}
                             required
                             placeholder="••••••••••••"
-                            className="w-full mx-4 bg-transparent border-none p-0 text-slate-900 text-sm focus:ring-0 outline-none"
+                            className="w-full bg-transparent border-none p-0 text-slate-900 text-xs focus:ring-0 outline-none pr-2"
                             value={formData.confirmPassword}
                             onChange={(e) => setFormData((prev) => ({ ...prev, confirmPassword: e.target.value }))}
                           />
                           <button
                             type="button"
-                            className="text-slate-400 hover:text-slate-600 focus:outline-none"
+                            className="text-slate-400 hover:text-slate-600 focus:outline-none flex-shrink-0"
                             onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                           >
-                            {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                            {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                           </button>
                         </div>
                       </div>
@@ -682,17 +718,18 @@ export default function RegisterPage() {
 
               {/* 4. DOCUMENTATION & VERIFICATION */}
               {activeTab === "documents" && (
-                <div className="space-y-4 animate-fadeIn pt-1">
+                <div className="space-y-4 animate-fadeIn">
                   <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Verification Documents</h2>
-                    <p className="text-xs font-medium text-slate-400 mt-0.5">Attach identity and employment proof files for system approval.</p>
+                    <h2 className="text-base font-bold text-slate-900 tracking-tight">Verification Documents</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Attach identity and employment proof files for system approval.</p>
                   </div>
+
                   <div className="space-y-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
                         Official ID Card / Badge *
                       </label>
-                      <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                      <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
                         <Upload className="w-5 h-5 text-slate-400 mb-1" />
                         <span className="text-xs font-semibold text-slate-600">
                           {idFile ? idFile.name : "Click to select or drop official ID file"}
@@ -711,7 +748,7 @@ export default function RegisterPage() {
                       <label className="block text-xs font-bold text-slate-700 mb-1">
                         Proof of Employment / Assignment (Optional)
                       </label>
-                      <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                      <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
                         <Upload className="w-5 h-5 text-slate-400 mb-1" />
                         <span className="text-xs font-semibold text-slate-600">
                           {proofFile ? proofFile.name : "Click to select support document"}
@@ -726,7 +763,7 @@ export default function RegisterPage() {
                       </label>
                     </div>
 
-                    <div className="pt-2">
+                    <div className="pt-1">
                       <label className="flex items-start gap-2.5 cursor-pointer select-none">
                         <input
                           type="checkbox"
@@ -734,7 +771,7 @@ export default function RegisterPage() {
                           checked={formData.certify}
                           onChange={(e) => setFormData((prev) => ({ ...prev, certify: e.target.checked }))}
                         />
-                        <span className="text-xs text-slate-600 font-medium leading-tight">
+                        <span className="text-[11px] text-slate-600 font-medium leading-tight">
                           I hereby certify that all provided personal details, position titles, and uploaded identity documents are valid and authentic.
                         </span>
                       </label>
@@ -744,15 +781,15 @@ export default function RegisterPage() {
               )}
             </div>
 
-            {/* Bottom Action Footer Controls */}
-            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+            {/* Bottom Action Footer Controls with Matched Height */}
+            <div className="pt-3 mt-1 border-t border-slate-100 flex items-center justify-between">
               {activeTab !== "personal" ? (
                 <button
                   type="button"
                   onClick={handlePrevTab}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg transition-all"
+                  className="h-10 inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-all"
                 >
-                  <ChevronLeft size={16} /> Previous
+                  <ChevronLeft size={15} /> Previous
                 </button>
               ) : (
                 <div />
@@ -762,23 +799,23 @@ export default function RegisterPage() {
                 <button
                   type="button"
                   onClick={handleNextTab}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-5 py-2.5 rounded-xl shadow-md transition-all ml-auto"
+                  className="h-10 inline-flex items-center gap-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-5 rounded-xl shadow-sm transition-all ml-auto"
                 >
-                  Continue <ChevronRight size={16} />
+                  Continue <ChevronRight size={15} />
                 </button>
               ) : (
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="inline-flex items-center gap-2 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-6 py-2.5 rounded-xl shadow-md transition-all ml-auto disabled:opacity-50"
+                  className="h-10 inline-flex items-center gap-2 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-500 px-6 rounded-xl shadow-sm transition-all ml-auto disabled:opacity-50"
                 >
                   {isLoading ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Transmitting...
+                      <Loader2 size={15} className="animate-spin" /> Transmitting...
                     </>
                   ) : (
                     <>
-                      <FileCheck size={16} /> Submit Application
+                      <FileCheck size={15} /> Submit Application
                     </>
                   )}
                 </button>

@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { auth } from "./firebase";
-import { User, Role, Permission, hasPermission, RBAC_CONFIG } from "./rbac";
+import { User, Role, Permission, RBAC_CONFIG, hasPermission } from "./rbac";
 import {
   loginUser,
   logoutUser,
@@ -81,23 +81,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 4. Status Check: Pending
-      if (profile.status === "pending") {
+      // 4. Status Check: Pending / Archived
+      if (profile.status === "archived") {
         await logoutUser();
         return {
           success: false,
-          status: "pending",
-          error: "Your account is still awaiting administrator approval.",
+          status: "archived",
+          error: "Your account is currently archived.",
         };
       }
 
-      // 5. Status Check: Rejected / Inactive
-      if (profile.status === "rejected" || profile.status === "inactive") {
+      // 5. Status Check: Deactivated / Suspended
+      if (profile.status === "deactivated" || profile.status === "suspended") {
         await logoutUser();
         return {
           success: false,
-          status: "rejected",
-          error: "This account has been declined or deactivated by the administrator.",
+          status: profile.status,
+          error: "This account has been declined, suspended, or deactivated by the administrator.",
         };
       }
 
