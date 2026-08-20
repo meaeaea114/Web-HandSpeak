@@ -9,7 +9,7 @@ import Image from 'next/image';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
 
   const adminLinks = [
     { href: '/dashboard/admin', label: 'Account Management', icon: LayoutDashboard },
@@ -19,12 +19,13 @@ export default function Sidebar() {
     { href: '/dashboard/admin/settings', label: 'Profile Settings', icon: User },
   ];
 
+  const displayName = user?.fullName || user?.name || 'Administrator';
+  const displayRole = user?.role ? `${user.role.toUpperCase()} SESSION` : 'SESSION ADMINISTRATOR';
+
   return (
-    
     <aside className="w-72 bg-white/60 backdrop-blur-xl p-5 flex flex-col h-full shrink-0 border border-white/50 rounded-[28px] shadow-xl">
       {/* Brand Title Branding Section */}
       <div className="flex items-center gap-3 px-3 py-4 mb-6">
-        {/* Swapped placeholder div with your logo image asset */}
         <div className="h-10 w-10 relative shrink-0">
           <Image 
             src="/logo.png" 
@@ -37,7 +38,7 @@ export default function Sidebar() {
         <span className="font-black text-xl tracking-tight text-[#521903]">HandSpeak</span>
       </div>
       
-      {/* 3D Glass Floating Menu Links */}
+      {/* Navigation Links */}
       <nav className="flex-1 space-y-3">
         {adminLinks.map((link) => {
           const isActive = pathname === link.href;
@@ -61,12 +62,12 @@ export default function Sidebar() {
         })}
       </nav>
       
-      {/* Bottom Profile Section */}
+      {/* Dynamic Profile Section */}
       <div className="mt-auto bg-white/80 p-4 rounded-2xl border border-white/60 shadow-sm space-y-4">
         <div>
-          <p className="text-[10px] font-black text-[#C29F85] uppercase tracking-widest">Session Administrator</p>
-          <p className="text-base font-black text-[#521903] tracking-tight">Mr. Admin</p>
-          <p className="text-xs font-semibold text-slate-500">admin@handspeak.com</p>
+          <p className="text-[10px] font-black text-[#C29F85] uppercase tracking-widest">{displayRole}</p>
+          <p className="text-base font-black text-[#521903] tracking-tight truncate">{displayName}</p>
+          <p className="text-xs font-semibold text-slate-500 truncate">{user?.email || 'admin@handspeak.edu'}</p>
         </div>
         <button 
           onClick={logout}

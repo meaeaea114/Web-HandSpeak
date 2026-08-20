@@ -7,15 +7,15 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import {
-  doc,
   setDoc,
   getDoc,
-  updateDoc,
   collection,
   query,
   where,
   getDocs,
   serverTimestamp,
+  doc,
+  updateDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { User, Role as UserRole, AccountRequest, Permission, RBAC_CONFIG } from "./rbac";
@@ -147,7 +147,6 @@ export function fileToBase64(file: File): Promise<string> {
 
 export async function checkExistingRegistration(email: string, employeeId: string): Promise<{ exists: boolean; reason?: string }> {
   const cleanEmail = email.trim().toLowerCase();
-  const cleanEmpId = employeeId.trim().toUpperCase();
 
   try {
     const emailQuery = query(collection(db, "accountRequests"), where("email", "==", cleanEmail));
@@ -302,7 +301,6 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
     throw new Error(duplicateCheck.reason);
   }
 
-  // 1. Create Firebase Auth user identity using Login Email
   let fbUser: FirebaseUser;
   try {
     const credential = await createUserWithEmailAndPassword(auth, cleanLoginEmail, data.password);
@@ -317,14 +315,12 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
   const trackingId = `REQ-${Date.now().toString().slice(-6)}`;
   const dateStr = new Date().toISOString().split("T")[0];
 
-  // 2. Convert files to base64 Data URLs
   const idDataUrl = await fileToBase64(data.idFile);
   let proofDataUrl = "";
   if (data.proofFile) {
     proofDataUrl = await fileToBase64(data.proofFile);
   }
 
-  // 3. Write complete registration document to `accountRequests/{requestId}`
   const requestDoc: AccountRequest = {
     id: requestId,
     requestId: trackingId,
@@ -360,7 +356,6 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
       createdAtServer: serverTimestamp(),
     });
 
-    // 4. Create mirror user profile in `users/{uid}` with status: 'pending'
     await setDoc(doc(db, "users", requestId), {
       id: requestId,
       name: fullName,
@@ -389,7 +384,6 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
     throw new Error("Unable to save registration request to database. " + (firestoreErr.message || ""));
   }
 
-  // 5. Sign out applicant immediately
   await firebaseSignOut(auth);
 
   return { requestId, trackingId };
@@ -437,6 +431,7 @@ export async function getUserProfile(
       name: adminName,
       fullName: adminName,
       email,
+      phone: "N/A",
       role: "admin",
       status: "active",
       department: "System Administration",
@@ -566,4 +561,15 @@ export async function deactivateUserAccount(requestId: string, reviewerName: str
     deactivatedAt: timestamp,
     deactivatedBy: reviewerName,
   });
+}
+
+/**
+ * Updates existing user profile fields in Firestore
+ */
+export async function updateUserProfile(
+  userId: string, 
+  data: Partial<User>
+): Promise<void> {
+  const userRef = doc(db, "users", userId);
+  await updateDoc(userRef, data);
 }

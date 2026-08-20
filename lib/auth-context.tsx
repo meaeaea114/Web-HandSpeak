@@ -2,13 +2,15 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
-import { auth } from "./firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "./firebase";
 import { User, Role, Permission, RBAC_CONFIG, hasPermission } from "./rbac";
 import {
   loginUser,
   logoutUser,
   submitAccountRequest,
   getUserProfile,
+  updateUserProfile,
   RegisterRequestPayload as RegisterRequestData,
 } from "./auth-service";
 
@@ -21,11 +23,37 @@ interface AuthContextType {
   login: (email: string, password: string, enteredFullName?: string) => Promise<{ success: boolean; error?: string; status?: string; role?: Role }>;
   register: (data: RegisterRequestData) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  updateUser: (updatedData: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   can: (permission: Permission) => boolean;
   permissions: Permission[];
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Save real login activity event under user's Firestore collection
+async function recordLoginActivity(uid: string, email: string) {
+  try {
+    const userActivityRef = collection(db, "users", uid, "login_activity");
+    const ua = typeof window !== "undefined" ? navigator.userAgent : "";
+
+    let deviceName = "Browser / Web App";
+    if (ua.includes("Windows")) deviceName = "Windows PC";
+    else if (ua.includes("Macintosh")) deviceName = "macOS Workstation";
+    else if (ua.includes("iPhone") || ua.includes("iPad")) deviceName = "iOS Device";
+    else if (ua.includes("Android")) deviceName = "Android Device";
+
+    await addDoc(userActivityRef, {
+      uid,
+      email,
+      device: deviceName,
+      userAgent: ua,
+      status: "Success",
+      timestamp: serverTimestamp(),
+    });
+  } catch (err) {
+    console.error("Failed to record login activity:", err);
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -36,7 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
-        // Only active approved users remain authenticated in state
         if (profile && profile.status === "active") {
           setFirebaseUser(fbUser);
           setUser(profile);
@@ -56,10 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string, enteredFullName?: string) => {
     try {
-      // 1. Firebase Authentication
       const fbUser = await loginUser(email, password);
-
-      // 2. Fetch Application User Record by UID
       const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
 
       if (!profile) {
@@ -67,7 +91,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: "Account record not found in system database." };
       }
 
-      // 3. Full Name Verification Check
       if (enteredFullName) {
         const storedName = (profile.fullName || profile.name || "").trim().toLowerCase();
         const inputName = enteredFullName.trim().toLowerCase();
@@ -81,7 +104,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 4. Status Check: Pending / Archived
       if (profile.status === "archived") {
         await logoutUser();
         return {
@@ -91,7 +113,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      // 5. Status Check: Deactivated / Suspended
       if (profile.status === "deactivated" || profile.status === "suspended") {
         await logoutUser();
         return {
@@ -101,7 +122,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      // 6. Access Approved
+      // Record actual successful login event to Firestore
+      await recordLoginActivity(fbUser.uid, fbUser.email || email);
+
       setUser(profile);
       setFirebaseUser(fbUser);
       return { success: true, role: profile.role };
@@ -118,6 +141,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: err.code || err.message };
     }
   }, []);
+
+  const updateUser = useCallback(async (updatedData: Partial<User>) => {
+    if (!user) {
+      return { success: false, error: "No authenticated user found." };
+    }
+
+    try {
+      await updateUserProfile(user.id, updatedData);
+
+      setUser((prevUser) => {
+        if (!prevUser) return null;
+        return {
+          ...prevUser,
+          ...updatedData,
+        };
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to update profile record." };
+    }
+  }, [user]);
 
   const logout = useCallback(async () => {
     try {
@@ -151,6 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         register,
         logout,
+        updateUser,
         can,
         permissions,
       }}

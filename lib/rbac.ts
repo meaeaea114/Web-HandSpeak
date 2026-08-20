@@ -54,6 +54,7 @@ export interface User {
   contactNumber?: string;
   role: Role;
   status: UserStatus;
+  phone: string;
   department?: string;
   employeeId?: string;
   assignedGrade?: string;

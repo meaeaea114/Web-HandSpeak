@@ -41,7 +41,8 @@ export function Header() {
     return <GraduationCap className="w-3 h-3 text-amber-600" />;
   };
 
-  const displayName = user?.fullName || user?.name || "Authenticated User";
+  const displayName = user?.fullName || user?.name || "System Administrator";
+  const avatarUrl = user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(displayName)}`;
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between sticky top-0 z-30 shadow-sm">
@@ -101,19 +102,17 @@ export function Header() {
             className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-slate-50 transition-colors text-left"
           >
             <img
-              src={
-                user?.avatar ||
-                `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(displayName)}`
-              }
+              key={avatarUrl}
+              src={avatarUrl}
               alt={displayName}
-              className="w-8 h-8 rounded-full border border-slate-200 bg-slate-100"
+              className="w-8 h-8 rounded-full border border-slate-200 bg-slate-100 object-cover"
             />
             <div className="hidden md:block">
               <p className="text-xs font-semibold text-slate-800 leading-none">{displayName}</p>
               <div className="flex items-center gap-1 mt-1">
                 {getRoleIcon()}
                 <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">
-                  {user?.role || "Staff"}
+                  {user?.role || "Admin"}
                 </span>
               </div>
             </div>
@@ -123,12 +122,14 @@ export function Header() {
             <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in slide-in-from-top-2">
               <div className="px-3.5 py-2 border-b border-slate-100">
                 <p className="text-xs font-semibold text-slate-800 truncate">{displayName}</p>
-                <p className="text-[10px] text-slate-500 truncate">{user?.email}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5 truncate">{user?.department}</p>
+                <p className="text-[10px] text-slate-500 truncate">{user?.email || "admin@handspeak.edu"}</p>
+                {user?.department && (
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">{user.department}</p>
+                )}
               </div>
 
               <Link
-                href={user?.role === "admin" ? "/dashboard/admin/account" : "/dashboard/teacher/account"}
+                href={user?.role === "admin" ? "/dashboard/admin/settings" : "/dashboard/teacher/account"}
                 onClick={() => setShowUserMenu(false)}
                 className="flex items-center gap-2 px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
               >
