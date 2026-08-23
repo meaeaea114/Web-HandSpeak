@@ -1,625 +1,838 @@
 import {
   collection,
-  doc,
-  getDocs,
-  getDoc,
-  addDoc,
-  updateDoc,
-  onSnapshot,
   query,
   where,
-  orderBy,
+  getDocs,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
   serverTimestamp,
-  Timestamp,
-  Unsubscribe,
-  limit as firestoreLimit,
-} from "firebase/firestore";
-import { db } from "./firebase";
+  orderBy,
+  limit,
+  arrayUnion,
+  writeBatch
+} from 'firebase/firestore';
+import { db } from './firebase';
+import * as XLSX from 'xlsx';
 
-// =======================================================
-// 1. EXACT FIRESTORE SCHEMA FOR SHARED FLUTTER & WEB APP
-// =======================================================
+// ==========================================
+// DATA MODELS & INTERFACES
+// ==========================================
 
-export interface AccountRequestDocument {
-  id?: string;
-  trackingId?: string;
-  status: "pending" | "approved" | "rejected";
+export interface LevelProgressDetail {
+  key: string;
+  name: string;
+  stars: number;
+}
 
-  // Identity & Scope Fields
-  firstName: string;
-  lastName: string;
-  middleName?: string;
-  suffix?: string;
+export interface ModuleProgressItem {
+  moduleId: string;
+  moduleName: string;
+  xp: number;
+  starsEarned: number;
+  totalPossibleStars: number;
+  progress: number;
+  completedLevels: number;
+  totalLevels: number;
+  levelDetails: LevelProgressDetail[];
+}
+
+export interface StudentAssessment {
+  id: string;
+  title: string;
+  score: number;
+  completedAt: any;
+}
+
+export interface GamificationData {
+  xp: number;
+  weeklyXp: number;
+  dailyXp: number;
+  stars: number;
+  streak: number;
+  alphabetXp: number;
+  numbersXp: number;
+  completedLessons: number;
+  lastCompletedChallengeDate?: string;
+}
+
+export interface TeacherNote {
+  id: string;
+  authorName: string;
+  authorUid: string;
+  content: string;
+  createdAt: any;
+}
+
+export interface TeacherProfile {
+  id: string;
+  uid: string;
+  name: string;
   fullName: string;
   email: string;
-  backupEmail?: string;
-  employeeId: string;
-  department: string;
-  facultyPosition: string;
-  position?: string;
-  assignedGrade: string;
-  assignedSections: string[];
-  username?: string;
-
-  // Contact Information
-  loginEmail?: string;
-  notificationEmail?: string;
-  mobileNumber?: string;
-  school?: string;
-
-  // Verification Document (Base64)
-  idDocumentName?: string;
-  idDocumentPath?: string;
-  idDocumentUrl?: string;
-  proofDocumentName?: string;
-  proofDocumentUrl?: string;
-
-  // Timestamps & Review
-  createdAtServer?: Timestamp | any;
-  createdAt?: string;
-  reviewedAt?: Timestamp | any;
-  rejectionReason?: string;
+  employeeId?: string;
+  department?: string;
+  status: 'active' | 'pending' | 'approved' | 'rejected' | 'inactive' | 'archived' | 'deactivated';
+  avatar?: string;
+  createdAt?: any;
+  lastActive?: any;
+  handledClasses?: string[];
+  role: string;
+  rawDoc?: Record<string, any>;
 }
 
-export interface RegistrationRequest {
-  id?: string;
-  // Personal Information
-  firstName: string;
+export interface Student {
+  id: string;
+  uid: string;
+  name: string;
+  fullName: string;
+  firstName?: string;
   middleName?: string;
-  lastName: string;
-  suffix?: string;
-
-  // Contact Information
-  loginEmail: string;          // Primary sign-in email for Firebase Auth
-  notificationEmail: string;   // Secondary notification email
-  mobileNumber: string;        // PH format 09XXXXXXXXX
-
-  // Professional / School Information
-  employeeId: string;
-  school: string;
-  department: string;
-  position: string;
-
-  // Account & Metadata
-  requestedRole: "Teacher";
-  status: "pending" | "approved" | "rejected";
-  submittedAt: string | Date;
-  reviewedAt?: string | Date;
+  middleInitial?: string;
+  lastName?: string;
+  studentId: string;
+  email: string;
+  type: 'SNED' | 'REGULAR';
+  section: string;
+  gradeLevel: string;
+  schoolName: string;
+  status: 'active' | 'pending' | 'approved' | 'rejected' | 'inactive' | 'archived' | 'deactivated';
+  temporaryPassword?: string;
+  currentModule: string;
+  currentTask?: string;
+  progress: number;
+  score: number | null;
+  avatar: string;
+  createdAt: any;
+  lastActive: any;
+  lastActiveDate?: any;
+  lastCompletedChallengeDate?: string;
+  approvedAt?: any;
+  approvedBy?: string;
+  rejectedAt?: any;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  archivedAt?: any;
+  deactivatedAt?: any;
+  gamification: GamificationData;
+  moduleProgress: ModuleProgressItem[];
+  assessments?: StudentAssessment[];
+  teacherNotes?: TeacherNote[];
+  rawDoc?: Record<string, any>;
 }
 
-const REGISTRATIONS_COLLECTION = "registration_requests";
-
-/**
- * Converts a file directly to a Base64 data string (No Storage CORS issues).
- */
-export function convertFileToBase64(file: File): Promise<{ url: string; fileName: string; path: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      resolve({
-        url: reader.result as string,
-        fileName: file.name,
-        path: "firestore_base64",
-      });
-    };
-    reader.onerror = (err) => reject(err);
-    reader.readAsDataURL(file);
-  });
+export interface ActivityLog {
+  id: string;
+  user: string;
+  userName?: string;
+  userRole?: string;
+  action: string;
+  title?: string;
+  target?: string;
+  description?: string;
+  type: 'auth' | 'content' | 'student' | 'system';
+  timestamp: any;
 }
-
-/**
- * Saves a new Registration Request into Firestore `accountRequests`.
- * Tries direct Firestore first; if client rules block it, uses the server-side API fallback.
- */
-export async function createAccountRequest(
-  data: Partial<AccountRequestDocument>
-): Promise<{ id: string; trackingId: string }> {
-  const trackingId =
-    data.trackingId ||
-    `REQ-${Math.floor(100000 + Math.random() * 900000)}`;
-
-  const fullName =
-    data.fullName ||
-    `${data.firstName || ""} ${data.middleName ? data.middleName + " " : ""}${data.lastName || ""} ${data.suffix && data.suffix !== "None" ? data.suffix : ""}`.trim();
-
-  const payload: any = {
-    firstName: data.firstName || "",
-    middleName: data.middleName || "",
-    lastName: data.lastName || "",
-    suffix: data.suffix || "None",
-    fullName,
-    email: data.email || data.loginEmail || "",
-    loginEmail: data.loginEmail || data.email || "",
-    notificationEmail: data.notificationEmail || data.backupEmail || "",
-    backupEmail: data.backupEmail || data.notificationEmail || "",
-    mobileNumber: data.mobileNumber || "",
-    employeeId: data.employeeId || "",
-    school: data.school || "",
-    department: data.department || "Special Education (SPED)",
-    facultyPosition: data.facultyPosition || data.position || "Teacher",
-    position: data.position || data.facultyPosition || "Teacher",
-    assignedGrade: data.assignedGrade || "Kindergarten",
-    assignedSections: data.assignedSections && data.assignedSections.length > 0 ? data.assignedSections : ["Hope"],
-    idDocumentName: data.idDocumentName || "",
-    idDocumentPath: data.idDocumentPath || "firestore_base64",
-    idDocumentUrl: data.idDocumentUrl || "",
-    proofDocumentName: data.proofDocumentName || "",
-    proofDocumentUrl: data.proofDocumentUrl || "",
-    trackingId,
-    status: data.status || "pending",
-  };
-
-  try {
-    // 1. Direct Firestore client attempt
-    const collectionRef = collection(db, "accountRequests");
-    const docRef = await addDoc(collectionRef, {
-      ...payload,
-      createdAtServer: serverTimestamp(),
-      createdAt: new Date().toISOString(),
-    });
-    return { id: docRef.id, trackingId };
-  } catch (clientErr: any) {
-    console.warn("Direct Firestore write permission error, using API fallback route:", clientErr);
-
-    // 2. Server API fallback
-    const res = await fetch("/api/account-request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const result = await res.json();
-    if (!res.ok || !result.success) {
-      throw new Error(result.message || "Failed to submit request.");
-    }
-
-    return { id: result.id, trackingId: result.trackingId };
-  }
-}
-
-/**
- * Submit a new teacher registration request to Firebase Firestore (`registration_requests` collection)
- */
-export async function submitRegistrationRequest(
-  data: Omit<RegistrationRequest, "id" | "status" | "submittedAt" | "requestedRole">
-): Promise<string> {
-  const payload = {
-    ...data,
-    requestedRole: "Teacher",
-    status: "pending",
-    submittedAt: serverTimestamp(),
-  };
-
-  const docRef = await addDoc(collection(db, REGISTRATIONS_COLLECTION), payload);
-  return docRef.id;
-}
-
-/**
- * Retrieve all registration requests from Firebase Firestore (`registration_requests` collection)
- */
-export async function getRegistrationRequests(): Promise<RegistrationRequest[]> {
-  try {
-    const q = query(
-      collection(db, REGISTRATIONS_COLLECTION),
-      orderBy("submittedAt", "desc")
-    );
-    
-    const querySnapshot = await getDocs(q);
-    const requests: RegistrationRequest[] = [];
-
-    querySnapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      let submittedAtDate: string = new Date().toISOString();
-
-      if (data.submittedAt instanceof Timestamp) {
-        submittedAtDate = data.submittedAt.toDate().toISOString();
-      } else if (data.submittedAt) {
-        submittedAtDate = new Date(data.submittedAt).toISOString();
-      }
-
-      requests.push({
-        id: docSnap.id,
-        firstName: data.firstName || "",
-        middleName: data.middleName || "",
-        lastName: data.lastName || "",
-        suffix: data.suffix || "",
-        loginEmail: data.loginEmail || "",
-        notificationEmail: data.notificationEmail || "",
-        mobileNumber: data.mobileNumber || "",
-        employeeId: data.employeeId || "",
-        school: data.school || "",
-        department: data.department || "",
-        position: data.position || "",
-        requestedRole: "Teacher",
-        status: data.status || "pending",
-        submittedAt: submittedAtDate,
-      });
-    });
-
-    return requests;
-  } catch (error) {
-    console.error("Error fetching registration requests:", error);
-    return [];
-  }
-}
-
-/**
- * Approve a teacher registration request in Firebase
- */
-export async function approveRegistrationRequest(requestId: string): Promise<void> {
-  const requestRef = doc(db, REGISTRATIONS_COLLECTION, requestId);
-  await updateDoc(requestRef, {
-    status: "approved",
-    reviewedAt: new Date().toISOString(),
-  });
-}
-
-/**
- * Reject a teacher registration request in Firebase
- */
-export async function rejectRegistrationRequest(requestId: string): Promise<void> {
-  const requestRef = doc(db, REGISTRATIONS_COLLECTION, requestId);
-  await updateDoc(requestRef, {
-    status: "rejected",
-    reviewedAt: new Date().toISOString(),
-  });
-}
-
-/**
- * Real-time listener for Firestore `accountRequests`.
- */
-export function subscribeToAccountRequests(
-  callback: (requests: AccountRequestDocument[]) => void
-): Unsubscribe {
-  const collectionRef = collection(db, "accountRequests");
-
-  return onSnapshot(
-    collectionRef,
-    (snapshot) => {
-      const requests: AccountRequestDocument[] = [];
-      snapshot.forEach((docSnap) => {
-        const d = docSnap.data();
-        requests.push({
-          id: docSnap.id,
-          trackingId: d.trackingId || docSnap.id,
-          status: d.status || "pending",
-          firstName: d.firstName || "",
-          lastName: d.lastName || "",
-          middleName: d.middleName || "",
-          suffix: d.suffix || "None",
-          fullName: d.fullName || `${d.firstName || ""} ${d.lastName || ""}`.trim(),
-          email: d.email || d.loginEmail || "",
-          loginEmail: d.loginEmail || d.email || "",
-          notificationEmail: d.notificationEmail || d.backupEmail || "",
-          backupEmail: d.backupEmail || d.notificationEmail || "",
-          mobileNumber: d.mobileNumber || "",
-          employeeId: d.employeeId || "",
-          school: d.school || "",
-          department: d.department || "Special Education (SPED)",
-          facultyPosition: d.facultyPosition || d.position || "Teacher",
-          position: d.position || d.facultyPosition || "Teacher",
-          assignedGrade: d.assignedGrade || "Kindergarten",
-          assignedSections: Array.isArray(d.assignedSections) ? d.assignedSections : [],
-          idDocumentName: d.idDocumentName || "",
-          idDocumentPath: d.idDocumentPath || "",
-          idDocumentUrl: d.idDocumentUrl || "",
-          proofDocumentName: d.proofDocumentName || "",
-          proofDocumentUrl: d.proofDocumentUrl || "",
-          createdAtServer: d.createdAtServer,
-          createdAt: d.createdAt || (d.createdAtServer?.toDate ? d.createdAtServer.toDate().toISOString() : ""),
-          reviewedAt: d.reviewedAt,
-          rejectionReason: d.rejectionReason,
-        });
-      });
-
-      requests.sort((a, b) => {
-        const timeA = a.createdAtServer?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-        const timeB = b.createdAtServer?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-        return timeB - timeA;
-      });
-
-      callback(requests);
-    },
-    (error) => {
-      console.error("Firestore onSnapshot error:", error);
-    }
-  );
-}
-
-/**
- * Fetch all Account Requests once.
- */
-export async function getAccountRequests(): Promise<AccountRequestDocument[]> {
-  try {
-    const collectionRef = collection(db, "accountRequests");
-    const snapshot = await getDocs(collectionRef);
-    const requests: AccountRequestDocument[] = [];
-
-    snapshot.forEach((docSnap) => {
-      const d = docSnap.data();
-      requests.push({
-        id: docSnap.id,
-        trackingId: d.trackingId || docSnap.id,
-        status: d.status || "pending",
-        firstName: d.firstName || "",
-        lastName: d.lastName || "",
-        middleName: d.middleName || "",
-        suffix: d.suffix || "None",
-        fullName: d.fullName || `${d.firstName || ""} ${d.lastName || ""}`.trim(),
-        email: d.email || d.loginEmail || "",
-        loginEmail: d.loginEmail || d.email || "",
-        notificationEmail: d.notificationEmail || d.backupEmail || "",
-        backupEmail: d.backupEmail || d.notificationEmail || "",
-        mobileNumber: d.mobileNumber || "",
-        employeeId: d.employeeId || "",
-        school: d.school || "",
-        department: d.department || "Special Education (SPED)",
-        facultyPosition: d.facultyPosition || d.position || "Teacher",
-        position: d.position || d.facultyPosition || "Teacher",
-        assignedGrade: d.assignedGrade || "Kindergarten",
-        assignedSections: Array.isArray(d.assignedSections) ? d.assignedSections : [],
-        idDocumentName: d.idDocumentName || "",
-        idDocumentPath: d.idDocumentPath || "",
-        idDocumentUrl: d.idDocumentUrl || "",
-        proofDocumentName: d.proofDocumentName || "",
-        proofDocumentUrl: d.proofDocumentUrl || "",
-        createdAtServer: d.createdAtServer,
-        createdAt: d.createdAt || (d.createdAtServer?.toDate ? d.createdAtServer.toDate().toISOString() : ""),
-        reviewedAt: d.reviewedAt,
-        rejectionReason: d.rejectionReason,
-      });
-    });
-
-    requests.sort((a, b) => {
-      const timeA = a.createdAtServer?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-      const timeB = b.createdAtServer?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-      return timeB - timeA;
-    });
-
-    return requests;
-  } catch (error) {
-    console.error("Error fetching account requests:", error);
-    return [];
-  }
-}
-
-/**
- * Updates status of an Account Request in Firestore (Approve or Reject).
- */
-export async function updateAccountRequestStatus(
-  requestId: string,
-  status: "approved" | "rejected",
-  rejectionReason?: string
-): Promise<boolean> {
-  try {
-    const docRef = doc(db, "accountRequests", requestId);
-    const updateData: any = {
-      status,
-      reviewedAt: serverTimestamp(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (status === "rejected" && rejectionReason) {
-      updateData.rejectionReason = rejectionReason;
-    }
-
-    await updateDoc(docRef, updateData);
-
-    if (status === "approved") {
-      const requestDoc = await getDoc(docRef);
-      if (requestDoc.exists()) {
-        const data = requestDoc.data();
-        const usersCollection = collection(db, "users");
-
-        await addDoc(usersCollection, {
-          email: data.email || data.loginEmail || "",
-          loginEmail: data.loginEmail || data.email || "",
-          notificationEmail: data.notificationEmail || data.backupEmail || "",
-          backupEmail: data.backupEmail || data.notificationEmail || "",
-          mobileNumber: data.mobileNumber || "",
-          firstName: data.firstName || "",
-          lastName: data.lastName || "",
-          fullName: data.fullName || `${data.firstName || ""} ${data.lastName || ""}`.trim(),
-          employeeId: data.employeeId || "",
-          school: data.school || "",
-          department: data.department || "",
-          facultyPosition: data.facultyPosition || data.position || "Teacher",
-          assignedGrade: data.assignedGrade || "",
-          assignedSections: data.assignedSections || [],
-          role: "Teacher",
-          accountStatus: "active",
-          sourceRequestId: requestId,
-          createdAtServer: serverTimestamp(),
-        });
-      }
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error updating account request status:", error);
-    return false;
-  }
-}
-
-// ==========================================
-// 2. DASHBOARD ANNOUNCEMENTS & LOGS
-// ==========================================
 
 export interface Announcement {
   id: string;
   title: string;
   content: string;
-  date: string;
-  author: string;
-  targetRole?: "all" | "admin" | "teacher" | "student";
-  category?: "General" | "System" | "Academic" | "Event";
-  isRead?: boolean;
+  author?: string;
+  targetRole?: 'all' | 'admin' | 'teacher' | 'student';
+  createdAt?: any;
+  timestamp?: any;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
 }
 
-export interface ActivityItem {
-  id: string;
-  type: string;
-  title?: string;
-  description?: string;
-  timestamp: string;
-  user?: string;
-  userName?: string;
-  userRole?: string;
-  action?: string;
-  target?: string;
+export interface BulkUploadRowValidation {
+  rowNumber: number;
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  fullName: string;
+  email: string;
+  studentId: string;
+  gradeLevel: string;
+  section: string;
+  classification: 'SNED' | 'REGULAR';
+  isValid: boolean;
+  isDuplicateInFile: boolean;
+  isExistingInDatabase: boolean;
+  errorReason?: string;
 }
 
-// Type alias & wrapper functions for backward compatibility with activity logs components
-export type ActivityLog = ActivityItem;
+export interface BulkUploadValidationResult {
+  totalRows: number;
+  validCount: number;
+  invalidCount: number;
+  duplicateInFileCount: number;
+  existingInDbCount: number;
+  rows: BulkUploadRowValidation[];
+}
 
-export async function getAnnouncements(): Promise<Announcement[]> {
+// ==========================================
+// DOCUMENT MAPPER
+// ==========================================
+
+export function mapDocToStudent(docSnap: any): Student {
+  const data = docSnap.data() || {};
+  
+  const rawType = (data.studentType || data.type || (data.isSned ? 'SNED' : 'REGULAR')).toString().toUpperCase();
+  const normalizedType: 'SNED' | 'REGULAR' = rawType.includes('SNED') ? 'SNED' : 'REGULAR';
+
+  let normalizedStatus: Student['status'] = 'active';
+  const statusStr = (data.status || 'pending').toString().toLowerCase();
+  if (statusStr === 'archived') normalizedStatus = 'archived';
+  else if (statusStr === 'rejected') normalizedStatus = 'rejected';
+  else if (statusStr === 'pending') normalizedStatus = 'pending';
+  else if (statusStr === 'approved' || statusStr === 'active') normalizedStatus = 'approved';
+  else if (statusStr === 'deactivated' || statusStr === 'inactive' || statusStr === 'suspended') normalizedStatus = 'deactivated';
+  else normalizedStatus = 'active';
+
+  const gamification: GamificationData = {
+    xp: typeof data.xp === 'number' ? data.xp : 0,
+    weeklyXp: typeof data.weeklyXp === 'number' ? data.weeklyXp : 0,
+    dailyXp: typeof data.dailyXp === 'number' ? data.dailyXp : 0,
+    stars: typeof data.stars === 'number' ? data.stars : 0,
+    streak: typeof data.streak === 'number' ? data.streak : 0,
+    alphabetXp: typeof data.alphabetXp === 'number' ? data.alphabetXp : 0,
+    numbersXp: typeof data.numbersXp === 'number' ? data.numbersXp : 0,
+    completedLessons: typeof data.completedLessons === 'number' ? data.completedLessons : 0,
+    lastCompletedChallengeDate: data.lastCompletedChallengeDate || undefined,
+  };
+
+  const progressMap = (data.progress && typeof data.progress === 'object') ? data.progress : {};
+  
+  const alphabetLevels: LevelProgressDetail[] = [];
+  const numbersLevels: LevelProgressDetail[] = [];
+
+  Object.entries(progressMap).forEach(([key, val]) => {
+    const starCount = typeof val === 'number' ? val : 0;
+    const cleanName = key.replace(/_/g, ' ').toUpperCase();
+    if (key.startsWith('alphabet')) {
+      alphabetLevels.push({ key, name: cleanName, stars: starCount });
+    } else if (key.startsWith('numbers')) {
+      numbersLevels.push({ key, name: cleanName, stars: starCount });
+    }
+  });
+
+  const alphabetStars = alphabetLevels.reduce((sum, l) => sum + l.stars, 0);
+  const alphabetMaxStars = Math.max(alphabetLevels.length * 3, 15);
+  const alphabetPercent = alphabetLevels.length > 0 ? Math.round((alphabetStars / alphabetMaxStars) * 100) : 0;
+
+  const numbersStars = numbersLevels.reduce((sum, l) => sum + l.stars, 0);
+  const numbersMaxStars = Math.max(numbersLevels.length * 3, 15);
+  const numbersPercent = numbersLevels.length > 0 ? Math.round((numbersStars / numbersMaxStars) * 100) : 0;
+
+  const totalCompletedStars = alphabetStars + numbersStars;
+  const totalMaxStars = alphabetMaxStars + numbersMaxStars;
+  const overallCalculatedProgress = (alphabetLevels.length > 0 || numbersLevels.length > 0)
+    ? Math.round((totalCompletedStars / totalMaxStars) * 100)
+    : (gamification.xp > 0 ? Math.min(Math.round((gamification.xp / 3000) * 100), 100) : 0);
+
+  const modulesList: ModuleProgressItem[] = [
+    {
+      moduleId: 'alphabet',
+      moduleName: 'FSL Alphabet',
+      xp: gamification.alphabetXp,
+      starsEarned: alphabetStars,
+      totalPossibleStars: alphabetMaxStars,
+      progress: alphabetPercent,
+      completedLevels: alphabetLevels.filter(l => l.stars >= 3).length,
+      totalLevels: alphabetLevels.length || 5,
+      levelDetails: alphabetLevels,
+    },
+    {
+      moduleId: 'numbers',
+      moduleName: 'FSL Numbers',
+      xp: gamification.numbersXp,
+      starsEarned: numbersStars,
+      totalPossibleStars: numbersMaxStars,
+      progress: numbersPercent,
+      completedLevels: numbersLevels.filter(l => l.stars >= 3).length,
+      totalLevels: numbersLevels.length || 5,
+      levelDetails: numbersLevels,
+    }
+  ];
+
+  let currentActiveModule = 'FSL Alphabet';
+  if (gamification.numbersXp > 0 && numbersPercent < 100) {
+    currentActiveModule = 'FSL Numbers';
+  } else if (alphabetPercent === 100 && numbersPercent === 100) {
+    currentActiveModule = 'Common Phrases';
+  }
+
+  const teacherNotesList: TeacherNote[] = Array.isArray(data.teacherNotes) 
+    ? data.teacherNotes 
+    : (data.notes && typeof data.notes === 'string' ? [{
+        id: 'note-init',
+        authorName: 'Instructor',
+        authorUid: 'teacher',
+        content: data.notes,
+        createdAt: data.updatedAt || data.createdAt || null
+      }] : []);
+
+  const rawScore = data.score !== undefined ? data.score : (overallCalculatedProgress > 0 ? overallCalculatedProgress : null);
+
+  return {
+    id: docSnap.id,
+    uid: data.uid || docSnap.id,
+    name: data.name || data.fullName || 'Student',
+    fullName: data.name || data.fullName || 'Student',
+    firstName: data.firstName || '',
+    middleName: data.middleName || '',
+    middleInitial: data.middleInitial || '',
+    lastName: data.lastName || '',
+    studentId: data.studentId || `STU-${docSnap.id.slice(0, 5).toUpperCase()}`,
+    email: data.email || 'No email registered',
+    type: normalizedType,
+    section: data.section || 'General Section',
+    gradeLevel: data.gradeLevel || data.grade || 'Grade 1',
+    schoolName: data.schoolName || 'Sto. Tomas North Central School',
+    status: normalizedStatus,
+    temporaryPassword: data.temporaryPassword || data.initialPassword || undefined,
+    currentModule: currentActiveModule,
+    currentTask: `${gamification.completedLessons} Lessons Mastered`,
+    progress: overallCalculatedProgress,
+    score: rawScore,
+    avatar: data.avatar || data.photoURL || '',
+    createdAt: data.createdAt || null,
+    lastActive: data.lastActive || data.lastActiveDate || data.updatedAt || data.createdAt || null,
+    lastActiveDate: data.lastActiveDate || null,
+    lastCompletedChallengeDate: data.lastCompletedChallengeDate || undefined,
+    approvedAt: data.approvedAt || null,
+    approvedBy: data.approvedBy || '',
+    rejectedAt: data.rejectedAt || null,
+    rejectionReason: data.rejectionReason || '',
+    reviewedBy: data.reviewedBy || '',
+    archivedAt: data.archivedAt || null,
+    deactivatedAt: data.deactivatedAt || null,
+    gamification,
+    moduleProgress: modulesList,
+    assessments: Array.isArray(data.assessments) ? data.assessments : [],
+    teacherNotes: teacherNotesList,
+    rawDoc: data,
+  };
+}
+
+// ==========================================
+// STUDENT SERVICES
+// ==========================================
+
+export async function getStudents(): Promise<Student[]> {
   try {
-    const collectionRef = collection(db, "announcements");
-    const q = query(collectionRef, orderBy("date", "desc"));
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('role', '==', 'student'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(mapDocToStudent);
+  } catch (error) {
+    console.error('Error fetching students from Firestore:', error);
+    throw new Error('Failed to load real student records from database.');
+  }
+}
+
+export function getStudentsRealtime(
+  onSuccess: (students: Student[]) => void,
+  onError: (error: Error) => void
+) {
+  try {
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('role', '==', 'student'));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const students = snapshot.docs.map(mapDocToStudent);
+        onSuccess(students);
+      },
+      (err) => {
+        console.error('Realtime student subscription error:', err);
+        onError(new Error(err.message || 'Error subscribing to student data.'));
+      }
+    );
+  } catch (error: any) {
+    onError(error);
+    return () => {};
+  }
+}
+
+export async function getStudentDeepDetails(studentId: string): Promise<Partial<Student>> {
+  try {
+    const studentDocRef = doc(db, 'users', studentId);
+    const studentSnap = await getDoc(studentDocRef);
+    if (!studentSnap.exists()) return {};
+    return mapDocToStudent(studentSnap);
+  } catch (error) {
+    console.error('Error fetching student details:', error);
+    return {};
+  }
+}
+
+// ==========================================
+// ACCOUNT ACTIONS & DRAWER SERVICES
+// ==========================================
+
+export function getStudentAccountRequestsRealtime(
+  onSuccess: (students: Student[]) => void,
+  onError: (error: Error) => void
+) {
+  return getStudentsRealtime(onSuccess, onError);
+}
+
+export async function approveStudentAccountRequest(studentId: string, reviewerName: string): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'approved',
+    approvedAt: serverTimestamp(),
+    approvedBy: reviewerName,
+    reviewedBy: reviewerName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deactivateStudentAccount(studentId: string, reviewerName: string): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'deactivated',
+    deactivatedAt: serverTimestamp(),
+    reviewedBy: reviewerName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function activateStudentAccount(studentId: string, reviewerName: string): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'approved',
+    approvedAt: serverTimestamp(),
+    approvedBy: reviewerName,
+    reviewedBy: reviewerName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function rejectStudentAccountRequest(
+  studentId: string,
+  reviewerName: string,
+  rejectionReason: string
+): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'rejected',
+    rejectionReason: rejectionReason.trim(),
+    rejectedAt: serverTimestamp(),
+    reviewedBy: reviewerName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function archiveStudent(studentId: string): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'archived',
+    archivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function restoreStudent(studentId: string): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    status: 'approved',
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateStudentClassAssignment(
+  studentId: string, 
+  updates: { gradeLevel?: string; section?: string; status?: Student['status'] }
+): Promise<void> {
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function addTeacherNoteToStudent(
+  studentId: string,
+  noteText: string,
+  teacherName: string,
+  teacherUid: string
+): Promise<TeacherNote> {
+  const newNote: TeacherNote = {
+    id: `note_${Date.now()}`,
+    authorName: teacherName || 'Teacher',
+    authorUid: teacherUid || 'unknown',
+    content: noteText.trim(),
+    createdAt: new Date().toISOString(),
+  };
+
+  const studentRef = doc(db, 'users', studentId);
+  await updateDoc(studentRef, {
+    teacherNotes: arrayUnion(newNote),
+    updatedAt: serverTimestamp(),
+  });
+
+  return newNote;
+}
+
+// ==========================================
+// EXCEL (.XLSX / .XLS) & CSV SPREADSHEET PARSER
+// ==========================================
+
+export async function validateSpreadsheetFile(file: File): Promise<BulkUploadValidationResult> {
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+
+  if (!sheetName) {
+    throw new Error('The uploaded spreadsheet does not contain any valid worksheet.');
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  if (!rawRows || rawRows.length <= 1) {
+    throw new Error('The spreadsheet is empty or missing data rows.');
+  }
+
+  const headerCols = (rawRows[0] || []).map((h: any) => String(h).trim().toLowerCase());
+  
+  let firstNameIdx = headerCols.findIndex((h: string) => h.includes('first'));
+  let middleNameIdx = headerCols.findIndex((h: string) => h.includes('middle'));
+  let lastNameIdx = headerCols.findIndex((h: string) => h.includes('last') || h.includes('surname'));
+  let fullNameIdx = headerCols.findIndex((h: string) => h === 'full name' || h === 'name');
+  let emailIdx = headerCols.findIndex((h: string) => h.includes('email'));
+  let studentIdIdx = headerCols.findIndex((h: string) => h.includes('student') || h.includes('id') || h.includes('lrn'));
+  let gradeIdx = headerCols.findIndex((h: string) => h.includes('grade'));
+  let sectionIdx = headerCols.findIndex((h: string) => h.includes('section'));
+  let classificationIdx = headerCols.findIndex((h: string) => h.includes('class') || h.includes('type'));
+
+  if (firstNameIdx === -1 && fullNameIdx === -1) firstNameIdx = 0;
+  if (emailIdx === -1) emailIdx = firstNameIdx === 0 && lastNameIdx === -1 ? 1 : 3;
+  if (studentIdIdx === -1) studentIdIdx = emailIdx === 1 ? 2 : 4;
+  if (gradeIdx === -1) gradeIdx = studentIdIdx + 1;
+  if (sectionIdx === -1) sectionIdx = gradeIdx + 1;
+  if (classificationIdx === -1) classificationIdx = sectionIdx + 1;
+
+  const usersRef = collection(db, 'users');
+  const snapshot = await getDocs(usersRef);
+  const existingEmails = new Set<string>();
+  const existingStudentIds = new Set<string>();
+
+  snapshot.docs.forEach((docSnap) => {
+    const d = docSnap.data() || {};
+    if (d.email) existingEmails.add(String(d.email).toLowerCase().trim());
+    if (d.studentId) existingStudentIds.add(String(d.studentId).toUpperCase().trim());
+  });
+
+  const parsedRows: BulkUploadRowValidation[] = [];
+  const fileEmails = new Set<string>();
+  const fileStudentIds = new Set<string>();
+
+  let validCount = 0;
+  let invalidCount = 0;
+  let duplicateInFileCount = 0;
+  let existingInDbCount = 0;
+
+  for (let i = 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.every((c: any) => String(c).trim() === '')) continue;
+
+    let firstName = '';
+    let middleName = '';
+    let lastName = '';
+
+    if (firstNameIdx !== -1 && lastNameIdx !== -1 && row[firstNameIdx] && row[lastNameIdx]) {
+      firstName = String(row[firstNameIdx] || '').trim();
+      middleName = middleNameIdx !== -1 ? String(row[middleNameIdx] || '').trim() : '';
+      lastName = String(row[lastNameIdx] || '').trim();
+    } else if (fullNameIdx !== -1 && row[fullNameIdx]) {
+      const parts = String(row[fullNameIdx]).trim().split(' ').filter(Boolean);
+      firstName = parts[0] || '';
+      lastName = parts.length > 1 ? parts[parts.length - 1] : '';
+      middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
+    } else {
+      firstName = String(row[0] || '').trim();
+      middleName = row.length > 6 ? String(row[1] || '').trim() : '';
+      lastName = row.length > 6 ? String(row[2] || '').trim() : String(row[1] || '').trim();
+    }
+
+    const email = String(row[emailIdx] || '').toLowerCase().trim();
+    const studentId = String(row[studentIdIdx] || '').toUpperCase().trim();
+    const rawGrade = String(row[gradeIdx] || 'Grade 1').trim();
+    const gradeLevel = rawGrade.toLowerCase().includes('grade') ? rawGrade : `Grade ${rawGrade}`;
+    const section = String(row[sectionIdx] || 'Narra').trim();
+    const classificationRaw = String(row[classificationIdx] || 'Regular').toUpperCase().trim();
+    const classification: 'SNED' | 'REGULAR' = classificationRaw.includes('SNED') ? 'SNED' : 'REGULAR';
+
+    const miDisplay = middleName ? `${middleName.charAt(0).toUpperCase()}.` : '';
+    const compiledFullName = [firstName, miDisplay, lastName].filter(Boolean).join(' ');
+
+    let isValid = true;
+    let isDuplicateInFile = false;
+    let isExistingInDatabase = false;
+    let errorReason = '';
+
+    if (!firstName || !lastName) {
+      isValid = false;
+      errorReason = 'Missing first name or surname';
+    } else if (!email || !email.includes('@')) {
+      isValid = false;
+      errorReason = 'Invalid email address';
+    } else if (!studentId || studentId.length < 5 || studentId.length > 12) {
+      isValid = false;
+      errorReason = 'Student ID must be 5-12 digits';
+    }
+
+    if (isValid) {
+      if (fileEmails.has(email) || fileStudentIds.has(studentId)) {
+        isDuplicateInFile = true;
+        isValid = false;
+        errorReason = 'Duplicate entry in spreadsheet';
+        duplicateInFileCount++;
+      } else if (existingEmails.has(email) || existingStudentIds.has(studentId)) {
+        isExistingInDatabase = true;
+        isValid = false;
+        errorReason = 'Account already exists in database';
+        existingInDbCount++;
+      } else {
+        fileEmails.add(email);
+        fileStudentIds.add(studentId);
+        validCount++;
+      }
+    } else {
+      invalidCount++;
+    }
+
+    parsedRows.push({
+      rowNumber: i,
+      firstName,
+      middleName,
+      lastName,
+      fullName: compiledFullName,
+      email,
+      studentId,
+      gradeLevel,
+      section,
+      classification,
+      isValid,
+      isDuplicateInFile,
+      isExistingInDatabase,
+      errorReason: errorReason || undefined,
+    });
+  }
+
+  return {
+    totalRows: parsedRows.length,
+    validCount,
+    invalidCount,
+    duplicateInFileCount,
+    existingInDbCount,
+    rows: parsedRows,
+  };
+}
+
+export async function validateBulkStudentCSV(csvText: string): Promise<BulkUploadValidationResult> {
+  const blob = new Blob([csvText], { type: 'text/csv' });
+  const file = new File([blob], 'upload.csv', { type: 'text/csv' });
+  return validateSpreadsheetFile(file);
+}
+
+export async function executeBulkStudentImport(
+  validRows: BulkUploadRowValidation[],
+  accountStatus: 'pending' | 'approved' = 'approved'
+): Promise<{ imported: number; failed: number }> {
+  let imported = 0;
+  let failed = 0;
+
+  const validOnly = validRows.filter((r) => r.isValid);
+  const batchSize = 400;
+
+  for (let i = 0; i < validOnly.length; i += batchSize) {
+    const chunk = validOnly.slice(i, i + batchSize);
+    const batch = writeBatch(db);
+
+    chunk.forEach((row) => {
+      const newStudentRef = doc(collection(db, 'users'));
+      const cleanPrefix = (row.firstName || 'Student').replace(/[^a-zA-Z]/g, '').slice(0, 4);
+      const cleanId = row.studentId.replace(/[^0-9]/g, '').slice(-4) || '1001';
+      const uniqueSalt = Math.random().toString(36).substring(2, 5).toUpperCase();
+      const generatedPassword = `HS@${cleanPrefix}${cleanId}#${uniqueSalt}`;
+
+      batch.set(newStudentRef, {
+        id: newStudentRef.id,
+        uid: newStudentRef.id,
+        name: row.fullName,
+        fullName: row.fullName,
+        firstName: row.firstName,
+        middleName: row.middleName,
+        middleInitial: row.middleName ? row.middleName.charAt(0).toUpperCase() : '',
+        lastName: row.lastName,
+        email: row.email,
+        studentId: row.studentId,
+        gradeLevel: row.gradeLevel,
+        grade: row.gradeLevel,
+        section: row.section,
+        studentType: row.classification,
+        type: row.classification,
+        isSned: row.classification === 'SNED',
+        role: 'student',
+        status: accountStatus,
+        temporaryPassword: generatedPassword,
+        creationOrigin: 'Spreadsheet Bulk Upload',
+        schoolName: 'Sto. Tomas North Central School',
+        department: row.classification === 'SNED' ? 'SNED' : 'STNCS',
+        progress: 0,
+        xp: 0,
+        stars: 0,
+        streak: 0,
+        completedLessons: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    try {
+      await batch.commit();
+      imported += chunk.length;
+    } catch (err) {
+      console.error('Batch commit failed for chunk:', err);
+      failed += chunk.length;
+    }
+  }
+
+  return { imported, failed };
+}
+
+// ==========================================
+// ANNOUNCEMENTS SERVICES
+// ==========================================
+
+export async function getAnnouncements(maxLimit = 10): Promise<Announcement[]> {
+  try {
+    const announcementsRef = collection(db, 'announcements');
+    const q = query(announcementsRef, orderBy('createdAt', 'desc'), limit(maxLimit));
     const snapshot = await getDocs(q);
 
-    if (!snapshot.empty) {
-      const list: Announcement[] = [];
-      snapshot.forEach((docSnap) => {
-        list.push({ id: docSnap.id, ...(docSnap.data() as Omit<Announcement, "id">) });
-      });
-      return list;
+    if (snapshot.empty) {
+      const fallbackSnap = await getDocs(announcementsRef);
+      return fallbackSnap.docs.slice(0, maxLimit).map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })) as Announcement[];
     }
-  } catch (error) {}
 
-  return [
-    {
-      id: "ann-1",
-      title: "Shared Database Synchronized",
-      content: "Web portal and mobile client are connected to handspeak-96d8d.",
-      date: new Date().toISOString(),
-      author: "System Administrator",
-      targetRole: "all",
-      category: "System",
-      isRead: false,
-    },
-  ];
+    return snapshot.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...docSnap.data(),
+    })) as Announcement[];
+  } catch (error) {
+    console.error('Error loading announcements from Firestore:', error);
+    return [];
+  }
 }
 
-export async function getActivityFeed(limitCount?: number): Promise<ActivityItem[]> {
-  const activities: ActivityItem[] = [
-    {
-      id: "act-1",
-      type: "system",
-      title: "Firebase Live Sync",
-      description: "accountRequests collection active.",
-      timestamp: "Just now",
-      userName: "System Administrator",
-      userRole: "admin",
-      action: "System Audit",
-      target: "accountRequests collection active",
-    },
-  ];
+export function getAnnouncementsRealtime(
+  onSuccess: (announcements: Announcement[]) => void,
+  onError?: (error: Error) => void
+) {
+  try {
+    const announcementsRef = collection(db, 'announcements');
+    const q = query(announcementsRef, orderBy('createdAt', 'desc'));
 
-  return typeof limitCount === "number" ? activities.slice(0, limitCount) : activities;
-}
-
-export async function getActivityLogs(limitCount?: number): Promise<ActivityLog[]> {
-  return getActivityFeed(limitCount);
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Announcement[];
+        onSuccess(items);
+      },
+      (err) => {
+        console.error('Error in realtime announcements listener:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err: any) {
+    if (onError) onError(err);
+    return () => {};
+  }
 }
 
 // ==========================================
-// 3. TEACHER PROFILES & DATA RETRIEVAL
+// ACTIVITY LOG SERVICES
 // ==========================================
 
-export interface TeacherProfile {
-  id: string;
-  name: string;
-  email: string;
-  department: string;
-  assignedGrade: string;
-  avatar: string;
-  assignedSections?: string[];
-  employeeId?: string;
-  status?: string;
-  role?: string;
-  loginEmail?: string;
-  notificationEmail?: string;
-  mobileNumber?: string;
+export async function getActivityLogs(limitCount = 8): Promise<ActivityLog[]> {
+  try {
+    const logsRef = collection(db, 'activity_logs');
+    const q = query(logsRef, orderBy('timestamp', 'desc'), limit(limitCount));
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.empty) {
+      const fallbackSnap = await getDocs(logsRef);
+      return fallbackSnap.docs.slice(0, limitCount).map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as ActivityLog[];
+    }
+
+    return snapshot.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as ActivityLog[];
+  } catch {
+    return [];
+  }
 }
 
-/**
- * Retrieves teacher profiles from the shared Firestore database.
- * Queries 'teachers' collection and 'users' collection with teacher roles.
- */
+// ==========================================
+// TEACHER SERVICES
+// ==========================================
+
 export async function getTeachers(): Promise<TeacherProfile[]> {
   try {
-    const teachersList: TeacherProfile[] = [];
-
-    // Query 'teachers' collection
-    const teachersRef = collection(db, "teachers");
-    const teachersSnap = await getDocs(teachersRef);
-
-    teachersSnap.forEach((docSnap) => {
+    const usersRef = collection(db, 'users');
+    // Fetch users with the role 'teacher'
+    const q = query(usersRef, where('role', '==', 'teacher'));
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map((docSnap) => {
       const data = docSnap.data();
-      teachersList.push({
-        id: docSnap.id,
-        name: data.fullName || data.name || "Unknown Teacher",
-        email: data.email || data.loginEmail || "",
-        loginEmail: data.loginEmail || data.email || "",
-        notificationEmail: data.notificationEmail || data.backupEmail || "",
-        mobileNumber: data.mobileNumber || "",
-        department: data.department || "Special Education (SPED)",
-        assignedGrade: data.assignedGrade || data.grade || "N/A",
-        avatar:
-          data.avatar ||
-          data.photoURL ||
-          `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
-            data.fullName || data.name || docSnap.id
-          )}`,
-        assignedSections: Array.isArray(data.assignedSections) ? data.assignedSections : [],
-        employeeId: data.employeeId || "",
-        status: data.status || data.accountStatus || "active",
-        role: data.role || data.facultyPosition || "Teacher",
-      });
-    });
-
-    // Query 'users' collection for account documents with teacher roles
-    const usersRef = collection(db, "users");
-    const q = query(
-      usersRef,
-      where("role", "in", ["teacher", "faculty", "Teacher", "Faculty"])
-    );
-    const usersSnap = await getDocs(q);
-
-    usersSnap.forEach((docSnap) => {
-      const data = docSnap.data();
-      const exists = teachersList.some(
-        (t) => t.id === docSnap.id || (t.email && t.email === data.email)
-      );
-
-      if (!exists) {
-        teachersList.push({
-          id: docSnap.id,
-          name: data.fullName || data.name || `${data.firstName || ""} ${data.lastName || ""}`.trim() || "Unknown Teacher",
-          email: data.email || data.loginEmail || "",
-          loginEmail: data.loginEmail || data.email || "",
-          notificationEmail: data.notificationEmail || data.backupEmail || "",
-          mobileNumber: data.mobileNumber || "",
-          department: data.department || "Special Education (SPED)",
-          assignedGrade: data.assignedGrade || data.grade || "N/A",
-          avatar:
-            data.avatar ||
-            data.photoURL ||
-            `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
-              data.fullName || data.name || docSnap.id
-            )}`,
-          assignedSections: Array.isArray(data.assignedSections) ? data.assignedSections : [],
-          employeeId: data.employeeId || "",
-          status: data.accountStatus || data.status || "active",
-          role: data.role || "Teacher",
-        });
+      
+      // Determine status safely
+      let normalizedStatus: TeacherProfile['status'] = 'active';
+      const statusStr = (data.status || 'pending').toString().toLowerCase();
+      if (['active', 'pending', 'approved', 'rejected', 'inactive', 'archived', 'deactivated'].includes(statusStr)) {
+        normalizedStatus = statusStr as TeacherProfile['status'];
       }
+      
+      return {
+        id: docSnap.id,
+        uid: data.uid || docSnap.id,
+        name: data.name || data.fullName || 'Teacher',
+        fullName: data.fullName || data.name || 'Teacher',
+        email: data.email || 'No email',
+        employeeId: data.employeeId || '',
+        department: data.department || '',
+        status: normalizedStatus,
+        avatar: data.avatar || data.photoURL || '',
+        createdAt: data.createdAt || null,
+        lastActive: data.lastActive || data.lastActiveDate || null,
+        handledClasses: data.handledClasses || [],
+        role: data.role || 'teacher',
+        rawDoc: data
+      } as TeacherProfile;
     });
-
-    return teachersList;
   } catch (error) {
-    console.error("Error fetching teacher profiles from Firestore:", error);
-    return [];
+    console.error('Error fetching teachers from Firestore:', error);
+    throw new Error('Failed to load teacher records from database.');
   }
 }
