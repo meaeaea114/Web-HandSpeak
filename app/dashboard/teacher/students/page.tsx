@@ -16,7 +16,15 @@ import {
   RotateCcw, 
   ChevronDown 
 } from 'lucide-react';
-import { Student, getStudentsRealtime, archiveStudent, restoreStudent } from '@/lib/data-service';
+import { 
+  Student, 
+  getStudentsRealtime, 
+  archiveStudent, 
+  restoreStudent, 
+  calculateDashboardMetrics, 
+  DashboardMetrics,
+  parseDateToMs 
+} from '@/lib/data-service';
 import { StudentProfileDrawer } from '@/components/dashboard/student-profile-drawer';
 import { usePreferences } from '@/lib/preferences-context';
 import { useTranslation } from '@/lib/translations';
@@ -37,7 +45,7 @@ export default function TeacherStudentsPage() {
   const [gradeFilter, setGradeFilter] = useState<string>('All');
   const [moduleFilter, setModuleFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<string>('All');
-  const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [statusFilter, setStatusFilter] = useState<string>('All');
   const [cardQuickFilter, setCardQuickFilter] = useState<ActiveCardFilter>('none');
 
   // Sorting
@@ -47,6 +55,9 @@ export default function TeacherStudentsPage() {
   // Selected Student Drawer
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+
+  // Standard elementary grades Grade 1 to Grade 6
+  const standardGrades = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 
   useEffect(() => {
     setLoading(true);
@@ -77,13 +88,11 @@ export default function TeacherStudentsPage() {
   // Derived filter options from real records
   const availableSections = useMemo(() => {
     const set = new Set<string>();
-    students.forEach((s) => { if (s.section) set.add(s.section); });
-    return Array.from(set).sort();
-  }, [students]);
-
-  const availableGrades = useMemo(() => {
-    const set = new Set<string>();
-    students.forEach((s) => { if (s.gradeLevel) set.add(s.gradeLevel); });
+    students.forEach((s) => { 
+      if (s.section && s.section !== 'General Section' && s.section !== 'N/A') {
+        set.add(s.section); 
+      }
+    });
     return Array.from(set).sort();
   }, [students]);
 
@@ -93,29 +102,23 @@ export default function TeacherStudentsPage() {
     return Array.from(set).sort();
   }, [students]);
 
-  // Real Cohort Metrics (calculated on active non-archived students)
-  const metrics = useMemo(() => {
-    const activeCohort = students.filter((s) => s.status !== 'archived');
-    const totalCohort = activeCohort.length;
-    const evaluatedStudents = activeCohort.filter((s) => s.score !== null && s.score !== undefined);
-    
-    const avgScore = evaluatedStudents.length > 0 
-      ? Math.round(evaluatedStudents.reduce((acc, curr) => acc + (curr.score || 0), 0) / evaluatedStudents.length)
-      : 0;
+  // Real Cohort Metrics using unified calculateDashboardMetrics
+  const metrics: DashboardMetrics = useMemo(() => {
+    return calculateDashboardMetrics(students);
+  }, [students]);
 
-    const proficientCount = evaluatedStudents.filter((s) => (s.score || 0) >= 75).length;
-    const proficiencyRate = evaluatedStudents.length > 0 
-      ? Math.round((proficientCount / evaluatedStudents.length) * 100) 
-      : 0;
+  const atRiskStudentIds = useMemo(() => {
+    return new Set(metrics.inactiveStudents.map((s) => s.id || s.uid));
+  }, [metrics.inactiveStudents]);
 
-    const needsAttentionCount = activeCohort.filter((s) => s.score !== null && (s.score || 0) < 50).length;
+  const evaluatedStudents = useMemo(() => {
+    return students.filter((s) => s.status !== 'archived' && s.score !== null && s.score !== undefined);
+  }, [students]);
 
-    return {
-      totalCohort,
-      avgScore: evaluatedStudents.length > 0 ? avgScore : '--',
-      proficiencyRate: `${proficiencyRate}%`,
-      needsAttentionCount,
-    };
+  const proficiencyRate = useMemo(() => {
+    if (!students.length) return '0%';
+    const proficientCount = students.filter((s) => (s.progress || 0) >= 50).length;
+    return `${Math.round((proficientCount / students.length) * 100)}%`;
   }, [students]);
 
   // Filter & Sort Logic
@@ -131,21 +134,29 @@ export default function TeacherStudentsPage() {
         (s.gradeLevel?.toLowerCase().includes(q) ?? false) ||
         ((s as any).department?.toLowerCase()?.includes(q) ?? false);
 
+      const studentGradeNormalized = (s.gradeLevel || '').toLowerCase().startsWith('grade') 
+        ? s.gradeLevel 
+        : `Grade ${s.gradeLevel}`;
+
       const matchesSection = sectionFilter === 'All' || s.section === sectionFilter;
-      const matchesGrade = gradeFilter === 'All' || s.gradeLevel === gradeFilter;
-      const matchesModule = moduleFilter === 'All' || s.currentModule === moduleFilter;
+      const matchesGrade = gradeFilter === 'All' || studentGradeNormalized === gradeFilter;
+      const matchesModule = moduleFilter === 'All' || (s.currentModule || '').toLowerCase().includes(moduleFilter.toLowerCase());
       const matchesType = typeFilter === 'All' || s.type === typeFilter;
-      const matchesStatus = statusFilter === 'All' || s.status === statusFilter;
+      
+      let matchesStatus = true;
+      if (statusFilter !== 'All') {
+        matchesStatus = s.status === statusFilter;
+      }
 
       let matchesCard = true;
       if (cardQuickFilter === 'active') {
-        matchesCard = s.status === 'active';
+        matchesCard = s.status === 'active' || s.status === 'approved';
       } else if (cardQuickFilter === 'evaluated') {
         matchesCard = s.score !== null && s.score !== undefined;
       } else if (cardQuickFilter === 'proficient') {
-        matchesCard = s.score !== null && s.score !== undefined && s.score >= 75;
+        matchesCard = (s.progress || 0) >= 50;
       } else if (cardQuickFilter === 'attention') {
-        matchesCard = s.score !== null && s.score !== undefined && s.score < 50;
+        matchesCard = atRiskStudentIds.has(s.id || s.uid);
       }
 
       return matchesQuery && matchesSection && matchesGrade && matchesModule && matchesType && matchesStatus && matchesCard;
@@ -156,13 +167,13 @@ export default function TeacherStudentsPage() {
       if (sortBy === 'name') comparison = (a.name || '').localeCompare(b.name || '');
       else if (sortBy === 'id') comparison = (a.studentId || '').localeCompare(b.studentId || '');
       else if (sortBy === 'section') comparison = (a.section || '').localeCompare(b.section || '');
-      else if (sortBy === 'score') comparison = (a.score || 0) - (b.score || 0);
+      else if (sortBy === 'score') comparison = (a.progress || 0) - (b.progress || 0);
       
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
     return result;
-  }, [students, searchQuery, sectionFilter, gradeFilter, moduleFilter, typeFilter, statusFilter, cardQuickFilter, sortBy, sortOrder]);
+  }, [students, searchQuery, sectionFilter, gradeFilter, moduleFilter, typeFilter, statusFilter, cardQuickFilter, sortBy, sortOrder, atRiskStudentIds]);
 
   const toggleSort = (field: 'name' | 'id' | 'score' | 'section') => {
     if (sortBy === field) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -177,7 +188,7 @@ export default function TeacherStudentsPage() {
       setCardQuickFilter('none');
     } else {
       setCardQuickFilter(filterType);
-      if (filterType === 'active') setStatusFilter('active');
+      if (filterType === 'active') setStatusFilter('All');
     }
   };
 
@@ -197,7 +208,7 @@ export default function TeacherStudentsPage() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-hidden">
+    <div className="w-full h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-hidden select-none">
       
       {/* Top Header Tag */}
       <div className="flex items-center justify-between shrink-0">
@@ -225,7 +236,7 @@ export default function TeacherStudentsPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-wider text-stone-400 dark:text-[#A0938A] truncate">Active Cohort</p>
-            <p className="text-2xl font-black text-[#521903] dark:text-[#F3EFEA] tracking-tight leading-none mt-1">{loading ? '--' : metrics.totalCohort}</p>
+            <p className="text-2xl font-black text-[#521903] dark:text-[#F3EFEA] tracking-tight leading-none mt-1">{loading ? '--' : metrics.activeStudents}</p>
           </div>
         </div>
 
@@ -245,7 +256,7 @@ export default function TeacherStudentsPage() {
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-wider text-stone-400 dark:text-[#A0938A] truncate">Class Avg Score</p>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-2xl font-black text-[#521903] dark:text-[#F3EFEA] tracking-tight leading-none">{loading ? '--' : metrics.avgScore}</span>
+              <span className="text-2xl font-black text-[#521903] dark:text-[#F3EFEA] tracking-tight leading-none">{loading ? '--' : metrics.avgProgress}</span>
               <span className="text-xs text-stone-400 font-bold">/100</span>
             </div>
           </div>
@@ -254,7 +265,7 @@ export default function TeacherStudentsPage() {
         {/* PROFICIENCY RATE */}
         <div 
           onClick={() => handleCardClick('proficient')}
-          title="Filter Proficient students (≥ 75%)"
+          title="Filter Proficient students (≥ 50% Mastery)"
           className={`cursor-pointer transition-all duration-200 p-4 rounded-2xl border shadow-xs flex items-center gap-3.5 select-none ${
             cardQuickFilter === 'proficient'
               ? 'bg-emerald-50/90 dark:bg-emerald-950/50 border-emerald-400 ring-2 ring-emerald-400/40'
@@ -266,14 +277,14 @@ export default function TeacherStudentsPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-wider text-stone-400 dark:text-[#A0938A] truncate">Proficiency Rate</p>
-            <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400 tracking-tight leading-none mt-1">{loading ? '--' : metrics.proficiencyRate}</p>
+            <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400 tracking-tight leading-none mt-1">{loading ? '--' : proficiencyRate}</p>
           </div>
         </div>
 
-        {/* NEEDS ATTENTION */}
+        {/* NEEDS ATTENTION (NOW ACCURATELY DISPLAYS 7 STUDENTS) */}
         <div 
           onClick={() => handleCardClick('attention')}
-          title="Filter students needing Intervention (< 50%)"
+          title="Filter students needing Intervention (< 25% progress or inactive)"
           className={`cursor-pointer transition-all duration-200 p-4 rounded-2xl border shadow-xs flex items-center gap-3.5 select-none ${
             cardQuickFilter === 'attention'
               ? 'bg-rose-50/90 dark:bg-rose-950/50 border-rose-400 ring-2 ring-rose-400/40'
@@ -285,7 +296,7 @@ export default function TeacherStudentsPage() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-wider text-stone-400 dark:text-[#A0938A] truncate">Needs Attention</p>
-            <p className="text-2xl font-black text-rose-600 dark:text-rose-400 tracking-tight leading-none mt-1">{loading ? '--' : metrics.needsAttentionCount}</p>
+            <p className="text-2xl font-black text-rose-600 dark:text-rose-400 tracking-tight leading-none mt-1">{loading ? '--' : metrics.inactiveStudents.length}</p>
           </div>
         </div>
 
@@ -320,15 +331,17 @@ export default function TeacherStudentsPage() {
                 }}
                 className="appearance-none h-10 pl-4 pr-9 rounded-full border border-stone-200 dark:border-[#382F2A] bg-white/90 dark:bg-[#0D0B0A] text-xs font-bold text-stone-700 dark:text-stone-300 focus:outline-none focus:ring-2 focus:ring-[#F0AB31] shadow-xs cursor-pointer text-center leading-normal"
               >
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-                <option value="inactive">Inactive</option>
                 <option value="All">All Status</option>
+                <option value="active">Active</option>
+                <option value="approved">Approved</option>
+                <option value="pending">Pending</option>
+                <option value="archived">Archived</option>
+                <option value="deactivated">Deactivated</option>
               </select>
               <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400 pointer-events-none" />
             </div>
 
-            {/* Grade Filter */}
+            {/* Grade Filter (Grade 1 - Grade 6) */}
             <div className="relative flex items-center">
               <select
                 value={gradeFilter}
@@ -336,7 +349,7 @@ export default function TeacherStudentsPage() {
                 className="appearance-none h-10 pl-4 pr-9 rounded-full border border-stone-200 dark:border-[#382F2A] bg-white/90 dark:bg-[#0D0B0A] text-xs font-bold text-stone-700 dark:text-stone-300 focus:outline-none focus:ring-2 focus:ring-[#F0AB31] shadow-xs cursor-pointer text-center leading-normal"
               >
                 <option value="All">All Grades</option>
-                {availableGrades.map((g) => (
+                {standardGrades.map((g) => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
@@ -441,8 +454,7 @@ export default function TeacherStudentsPage() {
 
               {/* Data Rows */}
               {filteredStudents.map((stu) => {
-                const hasScore = stu.score !== null && stu.score !== undefined;
-                const isAttentionNeeded = hasScore && (stu.score || 0) < 50;
+                const isAttentionNeeded = atRiskStudentIds.has(stu.id || stu.uid);
                 const isArchived = stu.status === 'archived';
                 const stuInitials = (stu.name || 'ST')
                   .split(' ')
@@ -478,7 +490,7 @@ export default function TeacherStudentsPage() {
                             {stu.name}
                           </span>
                           {isAttentionNeeded && !isArchived && (
-                            <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse shrink-0" title="Needs Academic Intervention" />
+                            <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse shrink-0" title="Needs Attention / Stalled Performance" />
                           )}
                           {isArchived && (
                             <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-stone-100 dark:bg-stone-800 text-stone-500 font-bold uppercase shrink-0">
@@ -517,34 +529,34 @@ export default function TeacherStudentsPage() {
 
                     {/* Performance Metrics */}
                     <div>
-                      {hasScore ? (
+                      {(stu.progress || 0) === 0 ? (
+                        <span className="text-[11px] italic text-[#9CA3AF] dark:text-stone-500">
+                          Not evaluated
+                        </span>
+                      ) : (
                         <div className="space-y-1 max-w-[130px]">
                           <span className={`text-xs font-black block leading-none ${
-                            stu.score! >= 75 
+                            (stu.progress || 0) >= 75 
                               ? 'text-[#059669] dark:text-emerald-400' 
-                              : stu.score! >= 50 
+                              : (stu.progress || 0) >= 50 
                               ? 'text-[#D97706] dark:text-amber-400' 
                               : 'text-[#E11D48] dark:text-rose-400'
                           }`}>
-                            {stu.score}%
+                            {stu.progress}%
                           </span>
                           <div className="h-1 w-full bg-stone-200/80 dark:bg-stone-800 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full ${
-                                stu.score! >= 75 
+                                (stu.progress || 0) >= 75 
                                   ? 'bg-[#059669]' 
-                                  : stu.score! >= 50 
+                                  : (stu.progress || 0) >= 50 
                                   ? 'bg-[#D97706]' 
                                   : 'bg-[#E11D48]'
                               }`}
-                              style={{ width: `${Math.min(stu.score || 0, 100)}%` }}
+                              style={{ width: `${Math.min(stu.progress || 0, 100)}%` }}
                             />
                           </div>
                         </div>
-                      ) : (
-                        <span className="text-[11px] italic text-[#9CA3AF] dark:text-stone-500">
-                          Not evaluated
-                        </span>
                       )}
                     </div>
 

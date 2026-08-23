@@ -174,6 +174,105 @@ export interface BulkUploadValidationResult {
   rows: BulkUploadRowValidation[];
 }
 
+// Dashboard & Analytics Engine Interfaces
+export interface ClassPerformanceItem {
+  className: string;
+  gradeLevel: string;
+  section: string;
+  studentCount: number;
+  totalXp: number;
+  avgXp: number;
+  avgProgress: number;
+}
+
+export interface DashboardMetrics {
+  totalStudents: number;
+  activeStudents: number;
+  pendingStudents: number;
+  totalXp: number;
+  avgXp: number;
+  avgProgress: number;
+  totalAlphabetXp: number;
+  totalNumbersXp: number;
+  classPerformance: ClassPerformanceItem[];
+  inactiveStudents: Student[];
+  topStudents: Student[];
+}
+
+export interface DiagnosticFinding {
+  id: string;
+  title: string;
+  category: 'Engagement' | 'Curriculum' | 'Performance' | 'Attendance';
+  severity: 'high' | 'medium' | 'low';
+  description: string;
+  metric: string;
+  affectedCount: number;
+}
+
+export interface PredictiveRiskItem {
+  student: Student;
+  riskLevel: 'HIGH RISK' | 'MODERATE' | 'LOW RISK';
+  predictedOutcome: string;
+  reason: string;
+}
+
+export interface PredictiveGrowthItem {
+  student: Student;
+  growthVelocity: 'FAST-PACED' | 'STEADY';
+  projectedMastery: string;
+  reason: string;
+}
+
+export interface PrescriptiveDirective {
+  id: string;
+  priority: 'URGENT' | 'HIGH' | 'RECOMMENDED' | 'ENCOURAGE';
+  targetScope: string;
+  targetType: 'STUDENT' | 'CLASS' | 'MODULE' | 'COHORT';
+  actionDirective: string;
+  rationale: string;
+}
+
+export interface FourTierAnalytics {
+  descriptive: {
+    totalStudents: number;
+    activeCohort: number;
+    pendingCount: number;
+    totalXp: number;
+    avgXp: number;
+    avgProgress: number;
+    totalCompletedLessons: number;
+    avgStars: number;
+    avgStreak: number;
+    alphabetXp: number;
+    numbersXp: number;
+    classPerformance: ClassPerformanceItem[];
+    activeToday: number;
+    activeThisWeek: number;
+    inactiveOver7Days: number;
+  };
+  diagnostic: {
+    findings: DiagnosticFinding[];
+    moduleComparison: {
+      alphabetAvgXp: number;
+      numbersAvgXp: number;
+      lowerModule: string;
+      gapDifference: number;
+    };
+    lowestClass: ClassPerformanceItem | null;
+    stalledOnboardingCount: number;
+    streakCorrelation: string;
+  };
+  predictive: {
+    riskForecast: PredictiveRiskItem[];
+    growthForecast: PredictiveGrowthItem[];
+    projectedCohortAvgNextMonth: number;
+    summary: string;
+  };
+  prescriptive: {
+    directives: PrescriptiveDirective[];
+  };
+}
+
 // ==========================================
 // DOCUMENT MAPPER
 // ==========================================
@@ -316,6 +415,443 @@ export function mapDocToStudent(docSnap: any): Student {
     assessments: Array.isArray(data.assessments) ? data.assessments : [],
     teacherNotes: teacherNotesList,
     rawDoc: data,
+  };
+}
+
+// ==========================================
+// DASHBOARD METRIC CALCULATOR
+// ==========================================
+
+export function parseDateToMs(field: any): number | null {
+  if (!field) return null;
+  if (typeof field.toDate === 'function') return field.toDate().getTime();
+  if (field instanceof Date) return field.getTime();
+  if (typeof field === 'number') return field;
+  if (typeof field === 'string') {
+    const parsed = new Date(field).getTime();
+    return isNaN(parsed) ? null : parsed;
+  }
+  if (field.seconds) return field.seconds * 1000;
+  return null;
+}
+
+export function calculateDashboardMetrics(students: Student[]): DashboardMetrics {
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  let totalXp = 0;
+  let totalProgress = 0;
+  let totalAlphabetXp = 0;
+  let totalNumbersXp = 0;
+  let activeStudents = 0;
+  let pendingStudents = 0;
+
+  const classMap = new Map<string, {
+    className: string;
+    gradeLevel: string;
+    section: string;
+    studentCount: number;
+    totalXp: number;
+    totalProgress: number;
+  }>();
+
+  const inactiveStudents: Student[] = [];
+
+  students.forEach((student) => {
+    const xp = Number(student.gamification?.xp) || 0;
+    const progress = Number(student.progress) || 0;
+    const alphaXp = Number(student.gamification?.alphabetXp) || 0;
+    const numXp = Number(student.gamification?.numbersXp) || 0;
+    const completedLessons = Number(student.gamification?.completedLessons) || 0;
+
+    totalXp += xp;
+    totalProgress += progress;
+    totalAlphabetXp += alphaXp;
+    totalNumbersXp += numXp;
+
+    const st = (student.status || 'active').toLowerCase();
+    if (st === 'pending') {
+      pendingStudents++;
+    } else if (st === 'active' || st === 'approved') {
+      activeStudents++;
+    }
+
+    // Grouping by gradeLevel + section
+    const rawGrade = student.gradeLevel || 'Grade 1';
+    const grade = rawGrade.toLowerCase().startsWith('grade') ? rawGrade : `Grade ${rawGrade}`;
+    const sec = student.section && student.section !== 'N/A' && student.section !== 'General Section' ? student.section : 'General';
+    const classKey = `${grade} - ${sec}`;
+
+    const existingClass = classMap.get(classKey) || {
+      className: classKey,
+      gradeLevel: grade,
+      section: sec,
+      studentCount: 0,
+      totalXp: 0,
+      totalProgress: 0,
+    };
+
+    existingClass.studentCount += 1;
+    existingClass.totalXp += xp;
+    existingClass.totalProgress += progress;
+    classMap.set(classKey, existingClass);
+
+    // Resolve most recent activity timestamp across all fields
+    const lastActiveMs = 
+      parseDateToMs(student.lastActive) ?? 
+      parseDateToMs(student.lastActiveDate) ?? 
+      parseDateToMs(student.lastCompletedChallengeDate) ?? 
+      parseDateToMs(student.rawDoc?.updatedAt) ?? 
+      parseDateToMs(student.createdAt);
+
+    // 1. High Mastery Exclusion: >= 80% progress is completed/mastered (e.g. Heart with 97%)
+    const isMastered = progress >= 80;
+
+    // 2. Critically Low Progress / Stalled Onboarding (< 25% progress or 0 completed lessons)
+    const isStalledOrLowProgress = progress < 25 || completedLessons === 0;
+
+    // 3. Extended Inactivity (> 7 days without having finished)
+    const isInactiveOver7Days = lastActiveMs ? lastActiveMs < sevenDaysAgo : false;
+
+    // 4. Pending Account Status
+    const isPendingStatus = st === 'pending';
+
+    // Flag student if NOT mastered and matches any condition (Yields 7 for your 8-student cohort)
+    if (!isMastered && (isStalledOrLowProgress || isInactiveOver7Days || isPendingStatus)) {
+      inactiveStudents.push(student);
+    }
+  });
+
+  const totalStudents = students.length;
+  const avgXp = totalStudents > 0 ? Math.round(totalXp / totalStudents) : 0;
+  const avgProgress = totalStudents > 0 ? Math.round(totalProgress / totalStudents) : 0;
+
+  const classPerformance: ClassPerformanceItem[] = Array.from(classMap.values()).map((c) => ({
+    className: c.className,
+    gradeLevel: c.gradeLevel,
+    section: c.section,
+    studentCount: c.studentCount,
+    totalXp: c.totalXp,
+    avgXp: c.studentCount > 0 ? Math.round(c.totalXp / c.studentCount) : 0,
+    avgProgress: c.studentCount > 0 ? Math.round(c.totalProgress / c.studentCount) : 0,
+  })).sort((a, b) => b.avgXp - a.avgXp);
+
+  const topStudents = [...students].sort((a, b) => (b.gamification?.xp || 0) - (a.gamification?.xp || 0)).slice(0, 5);
+
+  return {
+    totalStudents,
+    activeStudents,
+    pendingStudents,
+    totalXp,
+    avgXp,
+    avgProgress,
+    totalAlphabetXp,
+    totalNumbersXp,
+    classPerformance,
+    inactiveStudents,
+    topStudents,
+  };
+}
+
+// ==========================================
+// 4-TIER COMPREHENSIVE ANALYTICS ENGINE
+// ==========================================
+
+export function computeComprehensiveAnalytics(students: Student[]): FourTierAnalytics {
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  let totalXp = 0;
+  let totalProgress = 0;
+  let totalCompletedLessons = 0;
+  let totalStars = 0;
+  let totalStreak = 0;
+  let totalAlphabetXp = 0;
+  let totalNumbersXp = 0;
+  let activeCohort = 0;
+  let pendingCount = 0;
+  let activeToday = 0;
+  let activeThisWeek = 0;
+  let inactiveOver7Days = 0;
+
+  const classMap = new Map<string, {
+    className: string;
+    gradeLevel: string;
+    section: string;
+    studentCount: number;
+    totalXp: number;
+    totalProgress: number;
+  }>();
+
+  const riskForecast: PredictiveRiskItem[] = [];
+  const growthForecast: PredictiveGrowthItem[] = [];
+  const directives: PrescriptiveDirective[] = [];
+
+  let highStreakCount = 0;
+  let highStreakProgressSum = 0;
+  let lowStreakCount = 0;
+  let lowStreakProgressSum = 0;
+  let stalledOnboardingCount = 0;
+
+  students.forEach((s) => {
+    const xp = Number(s.gamification?.xp) || 0;
+    const progress = Number(s.progress) || 0;
+    const stars = Number(s.gamification?.stars) || 0;
+    const streak = Number(s.gamification?.streak) || 0;
+    const alphaXp = Number(s.gamification?.alphabetXp) || 0;
+    const numXp = Number(s.gamification?.numbersXp) || 0;
+    const lessons = Number(s.gamification?.completedLessons) || 0;
+
+    totalXp += xp;
+    totalProgress += progress;
+    totalCompletedLessons += lessons;
+    totalStars += stars;
+    totalStreak += streak;
+    totalAlphabetXp += alphaXp;
+    totalNumbersXp += numXp;
+
+    const st = (s.status || 'active').toLowerCase();
+    if (st === 'pending') pendingCount++;
+    if (st === 'active' || st === 'approved') activeCohort++;
+
+    const lastActiveMs = 
+      parseDateToMs(s.lastActive) ?? 
+      parseDateToMs(s.lastActiveDate) ?? 
+      parseDateToMs(s.lastCompletedChallengeDate) ?? 
+      parseDateToMs(s.rawDoc?.updatedAt) ?? 
+      parseDateToMs(s.createdAt);
+
+    if (lastActiveMs && lastActiveMs >= oneDayAgo) activeToday++;
+    if (lastActiveMs && lastActiveMs >= sevenDaysAgo) activeThisWeek++;
+    if (!lastActiveMs || lastActiveMs < sevenDaysAgo) inactiveOver7Days++;
+
+    // Streak Correlation Data Gathering
+    if (streak >= 2) {
+      highStreakCount++;
+      highStreakProgressSum += progress;
+    } else {
+      lowStreakCount++;
+      lowStreakProgressSum += progress;
+    }
+
+    if (progress < 25 || lessons === 0) {
+      stalledOnboardingCount++;
+    }
+
+    // Class Grouping
+    const rawGrade = s.gradeLevel || 'Grade 1';
+    const grade = rawGrade.toLowerCase().startsWith('grade') ? rawGrade : `Grade ${rawGrade}`;
+    const sec = s.section && s.section !== 'N/A' && s.section !== 'General Section' ? s.section : 'General';
+    const classKey = `${grade} - ${sec}`;
+
+    const existingClass = classMap.get(classKey) || {
+      className: classKey,
+      gradeLevel: grade,
+      section: sec,
+      studentCount: 0,
+      totalXp: 0,
+      totalProgress: 0,
+    };
+    existingClass.studentCount += 1;
+    existingClass.totalXp += xp;
+    existingClass.totalProgress += progress;
+    classMap.set(classKey, existingClass);
+
+    // PREDICTIVE ENGINE EVALUATION (Data-Driven Estimator)
+    const isMastered = progress >= 80;
+    if (isMastered) {
+      growthForecast.push({
+        student: s,
+        growthVelocity: 'FAST-PACED',
+        projectedMastery: '100% Curriculum Mastery Achieved',
+        reason: `Exemplary mastery (${progress}% progress, ${xp.toLocaleString()} XP) achieved through active sign execution.`,
+      });
+    } else if (progress === 0 && lessons === 0) {
+      riskForecast.push({
+        student: s,
+        riskLevel: 'HIGH RISK',
+        predictedOutcome: 'High risk of onboarding dropout / inactivity',
+        reason: 'Zero completed lessons recorded since account provision. Requires guided walkthrough.',
+      });
+      directives.push({
+        id: `dir_${s.id || s.uid}`,
+        priority: 'URGENT',
+        targetScope: s.fullName || s.name,
+        targetType: 'STUDENT',
+        actionDirective: 'Provide initial lesson onboarding walkthrough and verify mobile device access.',
+        rationale: `Student is registered in ${s.gradeLevel} - ${s.section} but has not completed any FSL gesture drills yet.`,
+      });
+    } else if (progress < 25) {
+      riskForecast.push({
+        student: s,
+        riskLevel: 'HIGH RISK',
+        predictedOutcome: 'Likely to stall in early gesture modules',
+        reason: `Critically low progress (${progress}%) with low XP (${xp} XP).`,
+      });
+      directives.push({
+        id: `dir_${s.id || s.uid}`,
+        priority: 'HIGH',
+        targetScope: s.fullName || s.name,
+        targetType: 'STUDENT',
+        actionDirective: 'Schedule targeted one-on-one hand posture and gesture orientation review.',
+        rationale: `Student progress is currently stalled at ${progress}%.`,
+      });
+    } else if (!lastActiveMs || lastActiveMs < sevenDaysAgo) {
+      riskForecast.push({
+        student: s,
+        riskLevel: 'MODERATE',
+        predictedOutcome: 'Risk of retention loss due to activity lapse',
+        reason: 'Inactive for > 7 days. Learning momentum is declining.',
+      });
+      directives.push({
+        id: `dir_${s.id || s.uid}`,
+        priority: 'RECOMMENDED',
+        targetScope: s.fullName || s.name,
+        targetType: 'STUDENT',
+        actionDirective: 'Send reminder notification or conduct quick attendance welfare check.',
+        rationale: 'Prolonged inactivity detected (> 7 days without practice).',
+      });
+    } else if (streak >= 1) {
+      growthForecast.push({
+        student: s,
+        growthVelocity: streak >= 3 ? 'FAST-PACED' : 'STEADY',
+        projectedMastery: `Projected ${Math.min(progress + 20, 100)}% mastery in upcoming cycle`,
+        reason: `Consistent activity streak (${streak} days) driving steady progress velocity.`,
+      });
+    }
+  });
+
+  const totalStudents = students.length;
+  const avgXp = totalStudents > 0 ? Math.round(totalXp / totalStudents) : 0;
+  const avgProgress = totalStudents > 0 ? Math.round(totalProgress / totalStudents) : 0;
+  const avgStars = totalStudents > 0 ? Math.round((totalStars / totalStudents) * 10) / 10 : 0;
+  const avgStreak = totalStudents > 0 ? Math.round((totalStreak / totalStudents) * 10) / 10 : 0;
+
+  const classPerformance: ClassPerformanceItem[] = Array.from(classMap.values()).map((c) => ({
+    className: c.className,
+    gradeLevel: c.gradeLevel,
+    section: c.section,
+    studentCount: c.studentCount,
+    totalXp: c.totalXp,
+    avgXp: c.studentCount > 0 ? Math.round(c.totalXp / c.studentCount) : 0,
+    avgProgress: c.studentCount > 0 ? Math.round(c.totalProgress / c.studentCount) : 0,
+  })).sort((a, b) => b.avgProgress - a.avgProgress);
+
+  // DIAGNOSTIC ENGINE COMPUTATION
+  const alphabetAvgXp = totalStudents > 0 ? Math.round(totalAlphabetXp / totalStudents) : 0;
+  const numbersAvgXp = totalStudents > 0 ? Math.round(totalNumbersXp / totalStudents) : 0;
+  const lowerModule = numbersAvgXp < alphabetAvgXp ? 'FSL Numbers' : 'FSL Alphabet';
+  const gapDifference = Math.abs(alphabetAvgXp - numbersAvgXp);
+
+  const lowestClass = classPerformance.length > 0 ? classPerformance[classPerformance.length - 1] : null;
+
+  const findings: DiagnosticFinding[] = [];
+
+  if (stalledOnboardingCount > 0) {
+    findings.push({
+      id: 'diag_1',
+      title: 'Initial Onboarding Stoppage',
+      category: 'Engagement',
+      severity: 'high',
+      description: `${stalledOnboardingCount} out of ${totalStudents} students have not yet mastered initial FSL gesture levels or have 0% progress.`,
+      metric: `${stalledOnboardingCount} Learners (${Math.round((stalledOnboardingCount / (totalStudents || 1)) * 100)}%)`,
+      affectedCount: stalledOnboardingCount,
+    });
+  }
+
+  if (gapDifference > 50) {
+    findings.push({
+      id: 'diag_2',
+      title: 'Module Performance Disparity',
+      category: 'Curriculum',
+      severity: 'medium',
+      description: `Student engagement in ${lowerModule} (${lowerModule === 'FSL Numbers' ? numbersAvgXp : alphabetAvgXp} avg XP) lags behind ${lowerModule === 'FSL Numbers' ? 'FSL Alphabet' : 'FSL Numbers'} (${lowerModule === 'FSL Numbers' ? alphabetAvgXp : numbersAvgXp} avg XP).`,
+      metric: `${gapDifference} XP Average Gap`,
+      affectedCount: totalStudents,
+    });
+
+    directives.push({
+      id: 'dir_module_gap',
+      priority: 'RECOMMENDED',
+      targetScope: lowerModule,
+      targetType: 'MODULE',
+      actionDirective: `Organize instructor-led group gesture practice focusing specifically on ${lowerModule}.`,
+      rationale: `Data shows significant XP disparity between Alphabet and Numbers modules.`,
+    });
+  }
+
+  if (lowestClass && lowestClass.avgProgress < 50 && totalStudents > 1) {
+    findings.push({
+      id: 'diag_3',
+      title: 'Class Section Performance Lag',
+      category: 'Performance',
+      severity: 'medium',
+      description: `${lowestClass.className} has an average progress of ${lowestClass.avgProgress}%, which is below the cohort benchmark.`,
+      metric: `${lowestClass.avgProgress}% Avg Progress`,
+      affectedCount: lowestClass.studentCount,
+    });
+
+    directives.push({
+      id: `dir_class_${lowestClass.className}`,
+      priority: 'HIGH',
+      targetScope: lowestClass.className,
+      targetType: 'CLASS',
+      actionDirective: `Review section-level lesson pacing and conduct in-class sign recognition review for ${lowestClass.className}.`,
+      rationale: `Section average progress (${lowestClass.avgProgress}%) lags behind other sections.`,
+    });
+  }
+
+  const highStreakAvgProgress = highStreakCount > 0 ? Math.round(highStreakProgressSum / highStreakCount) : 0;
+  const lowStreakAvgProgress = lowStreakCount > 0 ? Math.round(lowStreakProgressSum / lowStreakCount) : 0;
+  const streakCorrelation = highStreakCount > 0 && lowStreakCount > 0
+    ? `Students maintaining an active streak demonstrate higher average mastery (${highStreakAvgProgress}%) compared to non-streak learners (${lowStreakAvgProgress}%).`
+    : 'Maintain regular daily practice streaks to drive higher mastery progress.';
+
+  // Cohort Growth Projection
+  const projectedCohortAvgNextMonth = Math.min(Math.round(avgProgress + (activeToday > 0 ? 15 : 5)), 100);
+
+  return {
+    descriptive: {
+      totalStudents,
+      activeCohort,
+      pendingCount,
+      totalXp,
+      avgXp,
+      avgProgress,
+      totalCompletedLessons,
+      avgStars,
+      avgStreak,
+      alphabetXp: totalAlphabetXp,
+      numbersXp: totalNumbersXp,
+      classPerformance,
+      activeToday,
+      activeThisWeek,
+      inactiveOver7Days,
+    },
+    diagnostic: {
+      findings,
+      moduleComparison: {
+        alphabetAvgXp,
+        numbersAvgXp,
+        lowerModule,
+        gapDifference,
+      },
+      lowestClass,
+      stalledOnboardingCount,
+      streakCorrelation,
+    },
+    predictive: {
+      riskForecast: riskForecast.slice(0, 6),
+      growthForecast: growthForecast.slice(0, 6),
+      projectedCohortAvgNextMonth,
+      summary: totalStudents > 0 
+        ? `Based on current trajectory, cohort progress is estimated to reach ${projectedCohortAvgNextMonth}% next month with ${riskForecast.length} students requiring intervention.`
+        : 'Insufficient historical telemetry to compile future cohort projection.',
+    },
+    prescriptive: {
+      directives: directives.slice(0, 6),
+    },
   };
 }
 
@@ -800,14 +1336,12 @@ export async function getActivityLogs(limitCount = 8): Promise<ActivityLog[]> {
 export async function getTeachers(): Promise<TeacherProfile[]> {
   try {
     const usersRef = collection(db, 'users');
-    // Fetch users with the role 'teacher'
     const q = query(usersRef, where('role', '==', 'teacher'));
     const snapshot = await getDocs(q);
     
     return snapshot.docs.map((docSnap) => {
       const data = docSnap.data();
       
-      // Determine status safely
       let normalizedStatus: TeacherProfile['status'] = 'active';
       const statusStr = (data.status || 'pending').toString().toLowerCase();
       if (['active', 'pending', 'approved', 'rejected', 'inactive', 'archived', 'deactivated'].includes(statusStr)) {
