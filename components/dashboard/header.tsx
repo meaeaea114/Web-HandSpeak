@@ -84,7 +84,12 @@ export function Header() {
                     <div key={item.id} className="p-3 hover:bg-slate-50 transition-colors">
                       <p className="text-xs font-semibold text-slate-800">{item.title}</p>
                       <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{item.content}</p>
-                      <span className="text-[9px] text-slate-400 mt-1 block">{item.date}</span>
+                      <span className="text-[9px] text-slate-400 mt-1 block">
+                        {(item as Record<string, any>).date ||
+                          (item as Record<string, any>).createdAt ||
+                          (item as Record<string, any>).timestamp ||
+                          ""}
+                      </span>
                     </div>
                   ))
                 )}

@@ -18,8 +18,6 @@ import {
   ExternalLink,
   FileText,
   UserCheck,
-  Building,
-  GraduationCap,
 } from "lucide-react";
 
 export default function AdminTeachersPage() {
@@ -86,12 +84,14 @@ export default function AdminTeachersPage() {
     }
   };
 
-  const filteredTeachers = teachers.filter(
-    (t) =>
-      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.department.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredTeachers = teachers.filter((t) => {
+    const query = searchQuery.toLowerCase();
+    return (
+      (t.name?.toLowerCase().includes(query) ?? false) ||
+      (t.email?.toLowerCase().includes(query) ?? false) ||
+      (t.department?.toLowerCase().includes(query) ?? false)
+    );
+  });
 
   return (
     <div className="space-y-6">
@@ -190,8 +190,10 @@ export default function AdminTeachersPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-slate-700">{teacher.department}</td>
-                    <td className="py-3 px-4 text-slate-700">{teacher.assignedGrade}</td>
+                    <td className="py-3 px-4 text-slate-700">{teacher.department || "—"}</td>
+                    <td className="py-3 px-4 text-slate-700">
+                      {(teacher as Record<string, any>).assignedGrade || (teacher as Record<string, any>).grade || "N/A"}
+                    </td>
                     <td className="py-3 px-4">
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -318,14 +320,14 @@ export default function AdminTeachersPage() {
                 <span className="font-bold text-slate-700 block">Uploaded Identity Documents</span>
                 <div className="p-3 border rounded-xl flex items-center justify-between bg-white">
                   <div className="flex items-center gap-2 truncate">
-                    <FileText className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                    <FileText className="w-4 h-4 text-amber-500 shrink-0" />
                     <span className="font-medium truncate">{selectedRequest.idDocumentName}</span>
                   </div>
                   <a
                     href={selectedRequest.idDocumentUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-amber-600 font-bold hover:underline ml-2 flex-shrink-0"
+                    className="inline-flex items-center gap-1 text-amber-600 font-bold hover:underline ml-2 shrink-0"
                   >
                     View File <ExternalLink size={12} />
                   </a>
@@ -334,14 +336,14 @@ export default function AdminTeachersPage() {
                 {selectedRequest.proofDocumentUrl && (
                   <div className="p-3 border rounded-xl flex items-center justify-between bg-white">
                     <div className="flex items-center gap-2 truncate">
-                      <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                      <FileText className="w-4 h-4 text-blue-500 shrink-0" />
                       <span className="font-medium truncate">{selectedRequest.proofDocumentName}</span>
                     </div>
                     <a
                       href={selectedRequest.proofDocumentUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-blue-600 font-bold hover:underline ml-2 flex-shrink-0"
+                      className="inline-flex items-center gap-1 text-blue-600 font-bold hover:underline ml-2 shrink-0"
                     >
                       View File <ExternalLink size={12} />
                     </a>
