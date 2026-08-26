@@ -7,8 +7,12 @@ export function initAdmin() {
 
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "handspeak-96d8d";
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/['",]/g, "").trim();
-  const rawKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/^["']|["']$/g, "");
-  const privateKey = rawKey ? rawKey.replace(/\\n/g, "\n") : undefined;
+  
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  if (privateKey) {
+    privateKey = privateKey.replace(/^["']|["']$/g, "").trim();
+    privateKey = privateKey.replace(/\\n/g, "\n");
+  }
 
   if (clientEmail && privateKey) {
     return initializeApp({

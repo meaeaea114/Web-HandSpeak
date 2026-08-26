@@ -4,6 +4,7 @@ import { getAuth } from "firebase-admin/auth";
 import { initAdmin } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function getTransporter() {
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
@@ -26,42 +27,64 @@ function getTransporter() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { email } = await request.json();
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, error: "Invalid JSON request body." },
+        { status: 400 }
+      );
+    }
+
+    const { email } = body;
 
     if (!email || typeof email !== "string" || !email.trim()) {
       return NextResponse.json(
-        { success: false, error: "A valid email address is required." },
+        { success: false, error: "A valid institutional email address is required." },
         { status: 400 }
       );
     }
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Initialize Firebase Admin and generate secure reset link
-    initAdmin();
-    let resetLink: string;
+    // 1. Initialize Firebase Admin
+    try {
+      initAdmin();
+    } catch (adminInitErr: any) {
+      console.error("[Firebase Admin Init Error]:", adminInitErr.message || adminInitErr);
+      return NextResponse.json(
+        { success: false, error: "Authentication service configuration error." },
+        { status: 500 }
+      );
+    }
 
+    // 2. Generate Reset Link
+    let resetLink: string;
     try {
       resetLink = await getAuth().generatePasswordResetLink(cleanEmail);
     } catch (authError: any) {
-      // If user does not exist, return success to prevent email enumeration
+      console.error("[Firebase Auth Error]:", authError.message || authError);
       if (authError?.code === "auth/user-not-found") {
         return NextResponse.json({ success: true });
       }
-      throw authError;
+      return NextResponse.json(
+        { success: false, error: authError.message || "Failed to generate password reset token." },
+        { status: 500 }
+      );
     }
 
-    // 2. Prepare SMTP Transporter
+    // 3. Nodemailer Transporter
     const transporter = getTransporter();
     if (!transporter) {
-      console.error("[SMTP Error] Reset password failed: SMTP environment variables are missing.");
+      console.error("[SMTP Error]: Missing SMTP configuration variables.");
       return NextResponse.json(
-        { success: false, error: "SMTP service is not configured on the server." },
+        { success: false, error: "Email delivery service is currently unavailable." },
         { status: 503 }
       );
     }
 
-    // 3. Custom HTML Template
+    // 4. HTML Template
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; color: #1e293b;">
         <div style="margin-bottom: 24px;">
@@ -74,7 +97,7 @@ export async function POST(request: NextRequest) {
         </p>
 
         <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 28px;">
-          We received a request to reset the password for your HandSpeak account. Click the button below to choose a new password:
+          We received a request to reset the password for your HandSpeak account. Click the button below to set a new password:
         </p>
 
         <div style="margin-bottom: 32px; text-align: center;">
@@ -107,11 +130,11 @@ export async function POST(request: NextRequest) {
       html: htmlContent,
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { status: 200 });
   } catch (err: any) {
-    console.error("[SMTP Reset Password Error]:", err.message || err);
+    console.error("[Unhandled API Error in reset-password]:", err.message || err);
     return NextResponse.json(
-      { success: false, error: "Failed to deliver reset email. Please try again." },
+      { success: false, error: err.message || "Failed to process reset request." },
       { status: 500 }
     );
   }
