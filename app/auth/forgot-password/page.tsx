@@ -30,9 +30,21 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email: cleanEmail }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      const contentType = res.headers.get("content-type") || "";
 
-      if (!res.ok || !data.success) {
+      // Safely parse JSON only if the response is JSON-formatted
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      }
+
+      if (!res.ok) {
+        throw new Error(
+          data?.error || `Server responded with status ${res.status}. Please check your connection and try again.`
+        );
+      }
+
+      if (data && !data.success) {
         throw new Error(data.error || "Failed to send reset link. Please try again.");
       }
 

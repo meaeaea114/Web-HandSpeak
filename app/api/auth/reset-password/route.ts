@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
-import { getAuth } from "firebase-admin/auth";
-import { initAdmin } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +30,7 @@ export async function POST(request: NextRequest) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        { success: false, error: "Invalid JSON request body." },
+        { success: false, error: "Invalid JSON request payload." },
         { status: 400 }
       );
     }
@@ -41,50 +39,65 @@ export async function POST(request: NextRequest) {
 
     if (!email || typeof email !== "string" || !email.trim()) {
       return NextResponse.json(
-        { success: false, error: "A valid institutional email address is required." },
+        { success: false, error: "Please enter a valid institutional email address." },
         { status: 400 }
       );
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 
-    // 1. Initialize Firebase Admin
-    try {
-      initAdmin();
-    } catch (adminInitErr: any) {
-      console.error("[Firebase Admin Init Error]:", adminInitErr.message || adminInitErr);
+    if (!apiKey) {
+      console.error("[Reset Password] NEXT_PUBLIC_FIREBASE_API_KEY is missing.");
       return NextResponse.json(
-        { success: false, error: "Authentication service configuration error." },
+        { success: false, error: "Authentication service is not configured." },
         { status: 500 }
       );
     }
 
-    // 2. Generate Reset Link
-    let resetLink: string;
-    try {
-      resetLink = await getAuth().generatePasswordResetLink(cleanEmail);
-    } catch (authError: any) {
-      console.error("[Firebase Auth Error]:", authError.message || authError);
-      if (authError?.code === "auth/user-not-found") {
-        return NextResponse.json({ success: true });
+    // 1. Request Password Reset code from Firebase Auth REST API
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestType: "PASSWORD_RESET",
+          email: cleanEmail,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("[Firebase REST Error]:", data);
+      if (data?.error?.message === "EMAIL_NOT_FOUND") {
+        return NextResponse.json({ success: true }, { status: 200 });
       }
       return NextResponse.json(
-        { success: false, error: authError.message || "Failed to generate password reset token." },
-        { status: 500 }
+        { success: false, error: data?.error?.message || "Failed to generate password reset token." },
+        { status: 400 }
       );
     }
 
-    // 3. Nodemailer Transporter
+    const oobCode = data.oobCode;
+    const origin =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+    const resetLink = `${origin}/auth/reset-password?oobCode=${encodeURIComponent(oobCode)}&mode=resetPassword`;
+
+    // 2. Transporter Verification
     const transporter = getTransporter();
     if (!transporter) {
-      console.error("[SMTP Error]: Missing SMTP configuration variables.");
+      console.error("[SMTP Error] Transporter credentials are not configured.");
       return NextResponse.json(
-        { success: false, error: "Email delivery service is currently unavailable." },
+        { success: false, error: "Email service is temporarily unavailable." },
         { status: 503 }
       );
     }
 
-    // 4. HTML Template
+    // 3. Branded HTML Email
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; color: #1e293b;">
         <div style="margin-bottom: 24px;">
@@ -97,7 +110,7 @@ export async function POST(request: NextRequest) {
         </p>
 
         <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 28px;">
-          We received a request to reset the password for your HandSpeak account. Click the button below to set a new password:
+          We received a request to reset the password for your HandSpeak account. Click the button below to choose a new password:
         </p>
 
         <div style="margin-bottom: 32px; text-align: center;">
@@ -132,9 +145,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (err: any) {
-    console.error("[Unhandled API Error in reset-password]:", err.message || err);
+    console.error("[SMTP Reset Password Error]:", err.message || err);
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to process reset request." },
+      { success: false, error: "Failed to dispatch password reset email. Please try again." },
       { status: 500 }
     );
   }
