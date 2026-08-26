@@ -26,7 +26,21 @@ export const translations = {
     dateFormat: "Date Format",
     appearanceTheme: "Appearance Theme",
     loading: "Loading preferences...",
-    errorSaving: "Failed to save preferences. Please try again."
+    errorSaving: "Failed to save preferences. Please try again.",
+
+    // Sidebar / navigation
+    feedbackSupport: "Feedback & Support",
+    systemAnnouncements: "System Announcements",
+    contentManagement: "Content Management",
+    logout: "Logout",
+
+    // Header
+    searchPlaceholder: "Search students, lessons, gestures...",
+    notifications: "Notifications & Announcements",
+    noActiveAnnouncements: "No active announcements.",
+    accountSettings: "Account Settings",
+    signOut: "Sign Out",
+    newLabel: "new",
   },
   tl: {
     dashboard: "Dashboard",
@@ -51,8 +65,22 @@ export const translations = {
     dateFormat: "Format ng Petsa",
     appearanceTheme: "Tema ng Anyo",
     loading: "Naglo-load ng mga kagustuhan...",
-    errorSaving: "Bigo na i-save ang mga kagustuhan. Pakisubukan muli."
-  }
+    errorSaving: "Bigo na i-save ang mga kagustuhan. Pakisubukan muli.",
+
+    // Sidebar / navigation
+    feedbackSupport: "Puna at Suporta",
+    systemAnnouncements: "Mga Anunsyo ng System",
+    contentManagement: "Pamamahala ng Nilalaman",
+    logout: "Mag-logout",
+
+    // Header
+    searchPlaceholder: "Maghanap ng mga estudyante, aralin, kilos...",
+    notifications: "Mga Abiso at Anunsyo",
+    noActiveAnnouncements: "Walang aktibong anunsyo.",
+    accountSettings: "Mga Setting ng Account",
+    signOut: "Mag-sign Out",
+    newLabel: "bago",
+  },
 };
 
 export const useTranslation = (lang: Language) => {

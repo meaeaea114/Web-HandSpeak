@@ -175,6 +175,16 @@ body {
   background-repeat: no-repeat !important;
 }
 
+/* iOS Safari (and some Android WebViews) render `background-attachment:
+   fixed` incorrectly on scrollable pages — the layer gets repainted/rescaled
+   on every scroll frame, which looks like flicker, blur, or pixelation.
+   Fall back to a normal scrolling background below the tablet breakpoint. */
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll !important;
+  }
+}
+
 /* Light Mode: Provided light texture */
 html.theme-light body {
   background-image: url('/image_9aa0c4.jpg') !important;

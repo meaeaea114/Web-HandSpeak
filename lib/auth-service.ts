@@ -2,7 +2,9 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
-  sendPasswordResetEmail,
+  sendEmailVerification,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
   updateProfile,
   User as FirebaseUser,
 } from "firebase/auth";
@@ -18,7 +20,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
-import { User, Role as UserRole, AccountRequest, Permission, RBAC_CONFIG } from "./rbac";
+import { User, Role as UserRole, AccountRequest, Permission, RBAC_CONFIG, resolveSystemRole } from "./rbac";
 
 export interface UserProfile {
   uid: string;
@@ -54,8 +56,8 @@ export interface RegisterRequestPayload {
 
 export const MAX_FILE_SIZE_BYTES = 800 * 1024;
 export const ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
-export const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]{2,50}$/;
-export const MIDDLE_INITIAL_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ]$/;
+export const NAME_REGEX = /^[A-Za-z \s'-]{2,50}$/;
+export const MIDDLE_INITIAL_REGEX = /^[A-Za-z ]$/;
 export const EMPLOYEE_ID_REGEX = /^[A-Za-z0-9-]{3,20}$/;
 export const APPROVED_INSTITUTIONAL_DOMAINS = ["handspeak.edu", "school.edu.ph", "handspeak.edu.ph"];
 
@@ -72,11 +74,15 @@ export function formatAuthError(errorCode: string): string {
     case "auth/email-already-in-use":
       return "An account or pending registration with this email already exists.";
     case "auth/weak-password":
-      return "Password must meet all institutional complexity requirements.";
+      return "Password must be at least 8 characters and include uppercase, lowercase, numbers, and symbols.";
     case "auth/too-many-requests":
       return "Too many attempts. Please wait a moment and try again.";
     case "auth/network-request-failed":
       return "Network error. Please check your internet connection.";
+    case "auth/expired-action-code":
+      return "This password reset link has expired. Please request a new one.";
+    case "auth/invalid-action-code":
+      return "This password reset link is invalid or has already been used.";
     default:
       return "Authentication error. Please check your information and try again.";
   }
@@ -98,20 +104,16 @@ export function validateRegistrationPayload(data: RegisterRequestPayload): void 
   if (!EMPLOYEE_ID_REGEX.test(data.employeeId.trim())) {
     throw new Error("Employee ID must contain alphanumeric characters and hyphens only.");
   }
-
   const cleanEmail = data.email.trim().toLowerCase();
   if (!cleanEmail || !cleanEmail.includes("@")) {
     throw new Error("Please enter a valid email address containing '@'.");
   }
-
   if (data.loginEmail && (!data.loginEmail.trim() || !data.loginEmail.includes("@"))) {
     throw new Error("Please enter a valid Login Email containing '@'.");
   }
-
   if (!data.contactNumber || !data.contactNumber.trim()) {
     throw new Error("Contact Number is required.");
   }
-
   const password = data.password;
   if (password.length < 8) {
     throw new Error("Password must be at least 8 characters long.");
@@ -147,7 +149,6 @@ export function fileToBase64(file: File): Promise<string> {
 
 export async function checkExistingRegistration(email: string, employeeId: string): Promise<{ exists: boolean; reason?: string }> {
   const cleanEmail = email.trim().toLowerCase();
-
   try {
     const emailQuery = query(collection(db, "accountRequests"), where("email", "==", cleanEmail));
     const emailSnap = await getDocs(emailQuery);
@@ -163,7 +164,6 @@ export async function checkExistingRegistration(email: string, employeeId: strin
   } catch (e) {
     // Pass-through check
   }
-
   return { exists: false };
 }
 
@@ -171,12 +171,10 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
   try {
     const userDocRef = doc(db, 'users', uid);
     const userDoc = await getDoc(userDocRef);
-
     if (userDoc.exists()) {
       const data = userDoc.data();
       const role = (data.role as UserRole) || 'student';
       const rolePermissions = RBAC_CONFIG?.[role]?.permissions || [];
-
       return {
         uid,
         email: data.email || '',
@@ -190,7 +188,6 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
         avatarUrl: data.avatar || data.avatarUrl,
       };
     }
-
     return null;
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -213,7 +210,7 @@ export async function signUpUser(data: {
   assignedGrade: string;
   assignedSections: string[];
   role: UserRole;
-}): Promise<{ uid: string }> {
+}): Promise<{ uid: string; verificationEmailSent: boolean }> {
   try {
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanEmpId = data.employeeId.trim().toUpperCase();
@@ -226,6 +223,8 @@ export async function signUpUser(data: {
     const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, data.password);
     const uid = userCredential.user.uid;
     const dateStr = new Date().toISOString().split("T")[0];
+
+    const resolvedRole = resolveSystemRole(data.facultyPosition, data.role);
 
     const requestDocRef = doc(db, 'accountRequests', uid);
     await setDoc(requestDocRef, {
@@ -246,7 +245,7 @@ export async function signUpUser(data: {
       department: data.department,
       assignedGrade: data.assignedGrade,
       assignedSections: data.assignedSections,
-      role: data.role,
+      role: resolvedRole,
       status: 'active',
       submittedAt: dateStr,
       approvedAt: dateStr,
@@ -266,7 +265,8 @@ export async function signUpUser(data: {
       email: cleanEmail,
       loginEmail: cleanEmail,
       contactNumber: data.contactNumber.trim(),
-      role: data.role,
+      role: resolvedRole,
+      facultyPosition: data.facultyPosition,
       department: data.department,
       employeeId: cleanEmpId,
       assignedGrade: data.assignedGrade,
@@ -278,13 +278,13 @@ export async function signUpUser(data: {
       createdAtServer: serverTimestamp(),
     });
 
-    return { uid };
+    return { uid, verificationEmailSent: false };
   } catch (error: any) {
     throw new Error(formatAuthError(error.code || '') || error.message || 'Failed to complete registration request.');
   }
 }
 
-export async function submitAccountRequest(data: RegisterRequestPayload): Promise<{ requestId: string; trackingId: string }> {
+export async function submitAccountRequest(data: RegisterRequestPayload): Promise<{ requestId: string; trackingId: string; verificationEmailSent: boolean }> {
   validateRegistrationPayload(data);
 
   const cleanEmail = data.email.trim().toLowerCase();
@@ -302,6 +302,7 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
   }
 
   let fbUser: FirebaseUser;
+
   try {
     const credential = await createUserWithEmailAndPassword(auth, cleanLoginEmail, data.password);
     fbUser = credential.user;
@@ -321,6 +322,8 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
     proofDataUrl = await fileToBase64(data.proofFile);
   }
 
+  const resolvedRole = resolveSystemRole(data.facultyPosition);
+
   const requestDoc: AccountRequest = {
     id: requestId,
     requestId: trackingId,
@@ -335,11 +338,11 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
     email: cleanEmail,
     contactNumber: data.contactNumber.trim(),
     employeeId: cleanEmpId,
-    role: "teacher",
+    role: resolvedRole,
     facultyPosition: data.facultyPosition,
     department: data.department,
     assignedGrade: data.assignedGrade,
-    assignedSections: data.assignedSections,
+    assignedSections: data.assignedSections || [],
     idDocumentUrl: idDataUrl,
     idDocumentPath: "firestore_base64",
     idDocumentName: data.idFile.name,
@@ -368,12 +371,13 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
       loginEmail: cleanLoginEmail,
       email: cleanEmail,
       contactNumber: data.contactNumber.trim(),
-      role: "teacher",
+      role: resolvedRole,
+      facultyPosition: data.facultyPosition,
       status: "pending",
       department: data.department,
       employeeId: cleanEmpId,
       assignedGrade: data.assignedGrade,
-      assignedSections: data.assignedSections,
+      assignedSections: data.assignedSections || [],
       avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName)}`,
       createdAt: dateStr,
       lastActive: "Never",
@@ -385,13 +389,78 @@ export async function submitAccountRequest(data: RegisterRequestPayload): Promis
   }
 
   await firebaseSignOut(auth);
+  return { requestId, trackingId, verificationEmailSent: false };
+}
 
-  return { requestId, trackingId };
+export async function resendVerificationEmail(email: string, password: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+    const user = userCredential.user;
+
+    await user.reload();
+
+    if (user.emailVerified) {
+      await firebaseSignOut(auth);
+      return { success: false, message: "Your email address is already verified." };
+    }
+
+    await sendEmailVerification(user);
+    await firebaseSignOut(auth);
+    return { success: true, message: "A new verification email has been sent to your email address." };
+  } catch (error: any) {
+    await firebaseSignOut(auth).catch(() => {});
+    throw new Error(formatAuthError(error.code || "") || error.message || "Failed to resend verification email.");
+  }
 }
 
 export async function loginUser(email: string, password: string): Promise<FirebaseUser> {
   const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-  return credential.user;
+  const user = credential.user;
+
+  try {
+    const userDocRef = doc(db, "users", user.uid);
+    const userDoc = await getDoc(userDocRef);
+
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const status = userData.status;
+
+      // 1. Block Rejected Users
+      if (status === "rejected") {
+        await firebaseSignOut(auth);
+        throw new Error(
+          userData.rejectionReason
+            ? `Your account registration request has been declined: "${userData.rejectionReason}"`
+            : "Your account registration request has been declined by the administrator. Access is not permitted."
+        );
+      }
+
+      // 2. Block Pending Users
+      if (status === "pending") {
+        await firebaseSignOut(auth);
+        throw new Error("Your registration request is currently pending administrator review. You will receive an email once your account has been approved.");
+      }
+
+      // 3. Block Inactive, Suspended, Archived, or Deactivated Users
+      if (status === "deactivated" || status === "suspended" || status === "archived") {
+        await firebaseSignOut(auth);
+        throw new Error("This account is currently inactive or deactivated. Please contact support.");
+      }
+    }
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes("declined") ||
+        err.message.includes("rejected") ||
+        err.message.includes("pending") ||
+        err.message.includes("inactive") ||
+        err.message.includes("deactivated"))
+    ) {
+      throw err;
+    }
+  }
+
+  return user;
 }
 
 export async function logoutUser(): Promise<void> {
@@ -399,7 +468,40 @@ export async function logoutUser(): Promise<void> {
 }
 
 export async function resetPassword(email: string): Promise<void> {
-  await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+  const cleanEmail = email.trim().toLowerCase();
+
+  const response = await fetch("/api/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail }),
+  });
+
+  let data: any = {};
+  try {
+    data = await response.json();
+  } catch {
+    // Non-JSON response
+  }
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || "Failed to send password reset email. Please try again.");
+  }
+}
+
+export async function verifyResetCode(oobCode: string): Promise<string> {
+  try {
+    return await verifyPasswordResetCode(auth, oobCode);
+  } catch (error: any) {
+    throw new Error(formatAuthError(error.code || "") || "This password reset link is invalid or has expired.");
+  }
+}
+
+export async function completePasswordReset(oobCode: string, newPassword: string): Promise<void> {
+  try {
+    await confirmPasswordReset(auth, oobCode, newPassword);
+  } catch (error: any) {
+    throw new Error(formatAuthError(error.code || "") || "Failed to update your password. Please try again.");
+  }
 }
 
 export async function getUserProfile(
@@ -464,16 +566,17 @@ export async function getAccountRequests(): Promise<AccountRequest[]> {
 export async function approveAccountRequest(requestId: string, reviewerName: string): Promise<void> {
   const reqRef = doc(db, "accountRequests", requestId);
   const reqSnap = await getDoc(reqRef);
-  
   if (!reqSnap.exists()) {
     throw new Error("Registration request document does not exist.");
   }
-  
   const reqData = reqSnap.data() as AccountRequest;
   const timestamp = new Date().toISOString().split("T")[0];
 
+  const resolvedRole = resolveSystemRole(reqData.facultyPosition, reqData.role);
+
   await updateDoc(reqRef, {
     status: "active",
+    role: resolvedRole,
     reviewedAt: timestamp,
     reviewedBy: reviewerName,
     approvedAt: timestamp,
@@ -482,21 +585,44 @@ export async function approveAccountRequest(requestId: string, reviewerName: str
 
   await updateDoc(doc(db, "users", reqData.uid), {
     status: "active",
+    role: resolvedRole,
+    facultyPosition: reqData.facultyPosition,
+    department: reqData.department,
+    assignedGrade: reqData.assignedGrade,
+    assignedSections: reqData.assignedSections || [],
     approvedAt: timestamp,
     approvedBy: reviewerName,
     reviewedAt: timestamp,
     reviewedBy: reviewerName,
   });
+
+  // Dispatch Nodemailer approval email
+  try {
+    const recipientEmail = reqData.email || reqData.loginEmail;
+    if (recipientEmail) {
+      await fetch("/api/notifications/account-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "approved",
+          fullName: reqData.fullName || "User",
+          notificationEmail: recipientEmail,
+          loginEmail: reqData.loginEmail || reqData.email,
+          role: resolvedRole,
+        }),
+      });
+    }
+  } catch (notifyErr) {
+    console.error("Failed to send approval email notification:", notifyErr);
+  }
 }
 
 export async function rejectAccountRequest(requestId: string, reviewerName: string, rejectionReason: string): Promise<void> {
   const reqRef = doc(db, "accountRequests", requestId);
   const reqSnap = await getDoc(reqRef);
-  
   if (!reqSnap.exists()) {
     throw new Error("Registration request document does not exist.");
   }
-  
   const reqData = reqSnap.data() as AccountRequest;
   const timestamp = new Date().toISOString().split("T")[0];
 
@@ -513,16 +639,35 @@ export async function rejectAccountRequest(requestId: string, reviewerName: stri
     reviewedAt: timestamp,
     reviewedBy: reviewerName,
   });
+
+  // Dispatch Nodemailer rejection email
+  try {
+    const recipientEmail = reqData.email || reqData.loginEmail;
+    if (recipientEmail) {
+      await fetch("/api/notifications/account-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "rejected",
+          fullName: reqData.fullName || "User",
+          notificationEmail: recipientEmail,
+          loginEmail: reqData.loginEmail || reqData.email,
+          role: reqData.role || "teacher",
+          rejectionReason,
+        }),
+      });
+    }
+  } catch (notifyErr) {
+    console.error("Failed to send rejection email notification:", notifyErr);
+  }
 }
 
 export async function archiveAccountRequest(requestId: string, reviewerName: string): Promise<void> {
   const reqRef = doc(db, "accountRequests", requestId);
   const reqSnap = await getDoc(reqRef);
-  
   if (!reqSnap.exists()) {
     throw new Error("Registration request document does not exist.");
   }
-  
   const reqData = reqSnap.data() as AccountRequest;
   const timestamp = new Date().toISOString().split("T")[0];
 
@@ -542,11 +687,9 @@ export async function archiveAccountRequest(requestId: string, reviewerName: str
 export async function deactivateUserAccount(requestId: string, reviewerName: string): Promise<void> {
   const reqRef = doc(db, "accountRequests", requestId);
   const reqSnap = await getDoc(reqRef);
-  
   if (!reqSnap.exists()) {
     throw new Error("Account request record not found.");
   }
-  
   const reqData = reqSnap.data() as AccountRequest;
   const timestamp = new Date().toISOString().split("T")[0];
 
@@ -563,9 +706,6 @@ export async function deactivateUserAccount(requestId: string, reviewerName: str
   });
 }
 
-/**
- * Updates existing user profile fields in Firestore
- */
 export async function updateUserProfile(
   userId: string, 
   data: Partial<User>

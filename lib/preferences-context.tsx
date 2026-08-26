@@ -30,6 +30,21 @@ interface PreferencesContextType {
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
 
+// Local cache key used ONLY to render the correct theme instantly on the next
+// page load (avoids a light->dark flash while we wait on Firebase Auth to
+// resolve and Firestore to respond). Firestore remains the source of truth
+// for the actual preference values — this never substitutes for it.
+const THEME_CACHE_KEY = 'handspeak-theme-cache';
+
+function cacheThemeLocally(theme: Theme) {
+  try {
+    window.localStorage.setItem(THEME_CACHE_KEY, theme);
+  } catch {
+    // localStorage may be unavailable (private browsing, disabled storage) —
+    // the app still works, it just may flash once on the next load.
+  }
+}
+
 export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth(); 
   const [preferences, setPreferences] = useState<UserPreferences>(defaultPreferences);
@@ -49,9 +64,12 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const docRef = doc(db, 'admins', userId, 'settings', 'preferences');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setPreferences({ ...defaultPreferences, ...docSnap.data() } as UserPreferences);
+          const fetched = { ...defaultPreferences, ...docSnap.data() } as UserPreferences;
+          setPreferences(fetched);
+          cacheThemeLocally(fetched.theme);
         } else {
           await setDoc(docRef, defaultPreferences);
+          cacheThemeLocally(defaultPreferences.theme);
         }
       } catch (err) {
         console.error("Error fetching preferences:", err);
@@ -85,6 +103,9 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     
     // Optimistic UI update
     setPreferences(prev => ({ ...prev, [key]: value }));
+    if (key === 'theme') {
+      cacheThemeLocally(value as Theme);
+    }
 
     if (!userId) return;
 
@@ -95,6 +116,9 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
       console.error("Failed to save preference:", err);
       setError("Failed to save. Reverting changes.");
       setPreferences(previousPrefs);
+      if (key === 'theme') {
+        cacheThemeLocally(previousPrefs.theme);
+      }
     }
   };
 

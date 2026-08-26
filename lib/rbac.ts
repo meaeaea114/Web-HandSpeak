@@ -1,4 +1,4 @@
-export type Role = "admin" | "teacher" | "student";
+export type Role = "admin" | "teacher" | "principal" | "department" | "student";
 export type UserRole = Role;
 export type UserStatus = "active" | "pending" | "rejected" | "archived" | "deactivated" | "suspended";
 
@@ -54,9 +54,10 @@ export interface User {
   contactNumber?: string;
   role: Role;
   status: UserStatus;
-  phone: string;
+  phone?: string;
   department?: string;
   employeeId?: string;
+  facultyPosition?: string;
   assignedGrade?: string;
   assignedSections?: string[];
   avatar?: string;
@@ -128,6 +129,28 @@ export const RBAC_CONFIG: Record<Role, { permissions: Permission[] }> = {
       "view_leaderboard",
     ],
   },
+  principal: {
+    permissions: [
+      "view_analytics",
+      "manage_students",
+      "manage_classes",
+      "view_feedback",
+      "access_dictionary",
+      "access_practice",
+      "view_leaderboard",
+    ],
+  },
+  department: {
+    permissions: [
+      "manage_students",
+      "manage_classes",
+      "view_analytics",
+      "give_feedback",
+      "access_dictionary",
+      "access_practice",
+      "view_leaderboard",
+    ],
+  },
   teacher: {
     permissions: [
       "manage_students",
@@ -152,4 +175,12 @@ export const RBAC_CONFIG: Record<Role, { permissions: Permission[] }> = {
 
 export function hasPermission(role: Role, permission: Permission): boolean {
   return RBAC_CONFIG[role]?.permissions.includes(permission) ?? false;
+}
+
+export function resolveSystemRole(facultyPosition?: string, requestedRole?: string): Role {
+  const pos = (facultyPosition || requestedRole || "").toLowerCase().trim();
+  if (pos.includes("admin") || pos === "school administrator") return "admin";
+  if (pos.includes("principal") || pos.includes("school head")) return "principal";
+  if (pos.includes("department") || pos.includes("guidance")) return "department";
+  return "teacher";
 }

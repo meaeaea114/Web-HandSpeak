@@ -46,8 +46,8 @@ export default function TeacherDashboardLayout({
   };
 
   return (
-    <div 
-      className="flex h-screen w-screen overflow-hidden p-6 gap-6 font-sans antialiased bg-[#F5E6C4] bg-repeat bg-auto"
+    <div
+      className="flex h-screen w-screen overflow-hidden p-6 gap-6 font-sans antialiased bg-[#F5E6C4] bg-cover bg-center bg-no-repeat"
       style={{ backgroundImage: "url('/bg-parchment.jpg')" }}
     >
       {/* SIDEBAR COMPONENT PANEL */}

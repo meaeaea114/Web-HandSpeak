@@ -71,8 +71,11 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
-      {/* Seamless, Non-Blurry Tiled Background Layer */}
-      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[url('/bg-parchment.jpg')] bg-repeat bg-auto" />
+      {/* Parchment background: the source texture isn't a seamless tile, so
+          bg-repeat produced visible hard seams at every tile boundary.
+          bg-cover/bg-center renders it as one clean, correctly-proportioned
+          image at any viewport size instead. */}
+      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
 
       {/* FIXED BOUNDARIES MASTER FRAME */}
       <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">

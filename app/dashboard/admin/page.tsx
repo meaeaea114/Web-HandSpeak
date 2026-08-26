@@ -16,6 +16,7 @@ import {
   deactivateUserAccount,
   signUpUser 
 } from '@/lib/auth-service';
+import { sendAccountStatusEmail } from '@/lib/notification-service';
 import { AccountRequest } from '@/lib/rbac';
 
 export default function AdminAccountManagementPage() {
@@ -110,12 +111,28 @@ export default function AdminAccountManagementPage() {
     try {
       setProcessingId(req.id);
       await approveAccountRequest(req.id, "System Administrator");
-      
-      alert(
+
+      // The account state change has already succeeded at this point.
+      // The email notification is a separate, best-effort step — its
+      // failure must not be reported as an account-operation failure.
+      const emailResult = await sendAccountStatusEmail({
+        type: "approved",
+        fullName: req.fullName,
+        notificationEmail: req.email,
+        loginEmail: req.loginEmail,
+        role: req.role,
+      });
+
+      const baseMessage =
         `Account Approved!\n\n` +
         `Account has been activated for: ${req.fullName}\n` +
         `Authentication Login Email: ${req.loginEmail || req.email}\n` +
-        `Notification Email: ${req.email}`
+        `Notification Email: ${req.email}`;
+
+      alert(
+        emailResult.success
+          ? `${baseMessage}\n\nApproval email sent successfully.`
+          : `${baseMessage}\n\nAccount approved successfully, but the email notification could not be sent (${emailResult.error}).`
       );
 
       await fetchRequests();
@@ -147,8 +164,26 @@ export default function AdminAccountManagementPage() {
     try {
       setProcessingId(selectedRequest.id);
       await rejectAccountRequest(selectedRequest.id, "System Administrator", finalReason);
-      
-      alert(`Rejection recorded for ${selectedRequest.fullName}.\n\nReason: "${finalReason}"`);
+
+      // Rejection has already been recorded in Firestore; email delivery
+      // is reported separately so a delivery failure doesn't look like
+      // the rejection itself failed.
+      const emailResult = await sendAccountStatusEmail({
+        type: "rejected",
+        fullName: selectedRequest.fullName,
+        notificationEmail: selectedRequest.email,
+        loginEmail: selectedRequest.loginEmail,
+        role: selectedRequest.role,
+        rejectionReason: finalReason,
+      });
+
+      const baseMessage = `Rejection recorded for ${selectedRequest.fullName}.\n\nReason: "${finalReason}"`;
+
+      alert(
+        emailResult.success
+          ? `${baseMessage}\n\nRejection email sent successfully.`
+          : `${baseMessage}\n\nRejection recorded, but the email notification could not be sent (${emailResult.error}).`
+      );
       
       setShowRejectModal(false);
       setSelectedRequest(null);
@@ -237,7 +272,7 @@ export default function AdminAccountManagementPage() {
 
     setFormSubmitting(true);
     try {
-      await signUpUser({
+      const result = await signUpUser({
         firstName: formData.firstName.trim(),
         middleInitial: formData.middleInitial.trim().toUpperCase(),
         lastName: formData.lastName.trim(),
@@ -254,7 +289,11 @@ export default function AdminAccountManagementPage() {
         role: formData.role,
       });
 
-      alert("Account created and activated successfully with complete registration details!");
+      alert(
+        result.verificationEmailSent
+          ? "Account created and activated successfully! A verification email was sent — the user must verify it before they can sign in."
+          : "Account created and activated successfully, but the verification email could not be sent. The user can request one from the login page."
+      );
       setShowForm(false);
       setFormData({
         firstName: '',
