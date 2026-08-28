@@ -1,14 +1,20 @@
-import { getApps, getApp, initializeApp, cert, App } from "firebase-admin/app";
-import { getAuth, Auth } from "firebase-admin/auth";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
+import type { App } from "firebase-admin/app";
+import type { Auth } from "firebase-admin/auth";
+import type { Firestore } from "firebase-admin/firestore";
 
 let app: App | null = null;
 
+function getAdminSDK(): any {
+  return require("firebase-admin");
+}
+
 export function initAdmin(): App {
   if (app) return app;
-  if (getApps().length > 0) {
-    app = getApp();
-    return app;
+  const admin = getAdminSDK();
+
+  if (admin.apps && admin.apps.length > 0) {
+    app = admin.apps[0];
+    return app!;
   }
 
   const projectId =
@@ -24,8 +30,8 @@ export function initAdmin(): App {
   }
 
   if (clientEmail && privateKey) {
-    app = initializeApp({
-      credential: cert({
+    app = admin.initializeApp({
+      credential: admin.credential.cert({
         projectId,
         clientEmail,
         privateKey,
@@ -34,24 +40,26 @@ export function initAdmin(): App {
         process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
         "handspeak-96d8d.firebasestorage.app",
     });
-    return app;
+    return app!;
   }
 
-  app = initializeApp({
+  app = admin.initializeApp({
     projectId,
     storageBucket:
       process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
       "handspeak-96d8d.firebasestorage.app",
   });
-  return app;
+  return app!;
 }
 
 export function getAdminAuth(): Auth {
-  return getAuth(initAdmin());
+  initAdmin();
+  return getAdminSDK().auth();
 }
 
 export function getAdminDb(): Firestore {
-  return getFirestore(initAdmin());
+  initAdmin();
+  return getAdminSDK().firestore();
 }
 
 export const adminAuth = getAdminAuth;
