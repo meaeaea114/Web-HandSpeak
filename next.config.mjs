@@ -5,6 +5,9 @@ const nextConfig = {
 
   // Prevents Vercel from bundling firebase-admin and triggering ERR_REQUIRE_ESM
   serverExternalPackages: ["firebase-admin"],
+
+  // Resolves the jose/jwks-rsa ESM requirement error on Vercel
+  transpilePackages: ["jose", "jwks-rsa"],
 };
 
 export default nextConfig;
