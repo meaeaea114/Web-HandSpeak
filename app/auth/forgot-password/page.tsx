@@ -60,11 +60,11 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[#f5eccd] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-fixed relative overflow-hidden font-sans">
       <div className="absolute inset-0 bg-[#e8d89e]/30 backdrop-blur-[1px] pointer-events-none" />
 
-      <div className="relative z-10 w-full max-w-4xl bg-white rounded-[2rem] shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12 border border-[#ecd997]/60 min-h-[500px]">
+      <div className="relative z-10 w-full max-w-4xl bg-white rounded-[2rem] shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12 border border-[#ecd997]/60 min-h-125">
         {/* Left Hero Column */}
-        <div className="md:col-span-5 relative bg-gradient-to-br from-[#f5a623] via-[#e69512] to-[#cb7f04] p-8 sm:p-10 flex flex-col justify-between overflow-hidden text-slate-900">
+        <div className="md:col-span-5 relative bg-linear-to-br from-[#f5a623] via-[#e69512] to-[#cb7f04] p-8 sm:p-10 flex flex-col justify-between overflow-hidden text-slate-900">
           <div className="absolute inset-0 opacity-15 mix-blend-overlay bg-[url('/images/school-building.jpg')] bg-cover bg-center pointer-events-none" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/25 via-transparent to-black/5 pointer-events-none" />
+          <div className="absolute inset-0 bg-linear-to-t from-black/25 via-transparent to-black/5 pointer-events-none" />
 
           <div className="relative z-10 flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-white/90 p-1.5 shadow-md flex items-center justify-center backdrop-blur-sm">
@@ -118,7 +118,7 @@ export default function ForgotPasswordPage() {
 
             {errorMessage && (
               <div className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 flex items-start gap-2.5 text-red-700 text-xs animate-in fade-in slide-in-from-top-1">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500 mt-0.5" />
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
                 <span className="leading-relaxed font-medium">{errorMessage}</span>
               </div>
             )}
@@ -180,7 +180,7 @@ export default function ForgotPasswordPage() {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3.5 px-4 bg-gradient-to-r from-[#f5a623] to-[#e69512] hover:from-[#e69512] hover:to-[#cb7f04] text-slate-950 font-bold text-xs uppercase tracking-widest rounded-full shadow-md shadow-[#f5a623]/30 hover:shadow-lg hover:shadow-[#f5a623]/40 active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full py-3.5 px-4 bg-linear-to-r from-[#f5a623] to-[#e69512] hover:from-[#e69512] hover:to-[#cb7f04] text-slate-950 font-bold text-xs uppercase tracking-widest rounded-full shadow-md shadow-[#f5a623]/30 hover:shadow-lg hover:shadow-[#f5a623]/40 active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isLoading ? (
                     <>

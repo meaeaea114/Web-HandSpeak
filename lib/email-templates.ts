@@ -14,6 +14,11 @@ export interface RejectionEmailOptions {
   loginUrl: string;
 }
 
+export interface PasswordResetEmailOptions {
+  fullName?: string;
+  resetLink: string;
+}
+
 export function buildApprovalEmail(options: ApprovalEmailOptions) {
   const { fullName, loginEmail, notificationEmail, loginUrl } = options;
   const accountEmail = loginEmail || notificationEmail;
@@ -192,4 +197,89 @@ export function buildRejectionEmail(options: RejectionEmailOptions) {
   `;
 
   return { subject, text, html };
+}
+
+export function buildPasswordResetEmail(options: PasswordResetEmailOptions) {
+  const { fullName, resetLink } = options;
+  const greeting = fullName ? `Hello <span style="color: #b45309;">${fullName}</span>,` : "Hello,";
+
+  const subject = "Reset Your HandSpeak Password";
+  const text = `Hello,\n\nWe received a request to reset the password for your HandSpeak account. Click the link below to choose a new password:\n\n${resetLink}\n\nIf you did not request this password reset, you can safely ignore this email.\n\nBest regards,\nThe HandSpeak Team`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Password Recovery Request</title>
+    </head>
+    <body style="margin: 0; padding: 32px 16px; background-color: #f7f4ef; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(71, 35, 12, 0.08); border: 1px solid #ede8de;">
+        
+        <!-- Header Banner with Warm Amber Gradient -->
+        <tr>
+          <td style="background: linear-gradient(135deg, #f5a623 0%, #e69512 100%); padding: 32px 36px; text-align: left;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+              <tr>
+                <td>
+                  <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #0f172a; letter-spacing: -0.02em;">HandSpeak</h1>
+                  <div style="display: inline-block; margin-top: 8px; background-color: rgba(255, 255, 255, 0.35); border: 1px solid rgba(255, 255, 255, 0.6); padding: 4px 12px; border-radius: 9999px;">
+                    <span style="font-size: 11px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.08em;">Password Recovery Request</span>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Body Content -->
+        <tr>
+          <td style="padding: 36px 36px 24px 36px;">
+            <p style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #292524;">
+              ${greeting}
+            </p>
+            <p style="margin: 0 0 28px 0; font-size: 14px; line-height: 1.65; color: #57534e;">
+              We received a request to reset the password for your HandSpeak account. Click the button below to choose a new password:
+            </p>
+
+            <!-- CTA Button -->
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 28px;">
+              <tr>
+                <td align="center">
+                  <a href="${resetLink}" target="_blank" style="display: inline-block; background-color: #f5a623; color: #0f172a; font-size: 13px; font-weight: 800; text-decoration: none; padding: 14px 36px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.08em; box-shadow: 0 4px 14px rgba(245, 166, 35, 0.35);">
+                    Reset Password
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.5; color: #78716c;">
+              If the button above does not work, copy and paste this link into your browser:
+            </p>
+            <p style="margin: 0 0 24px 0; font-size: 12px; line-height: 1.5; word-break: break-all;">
+              <a href="${resetLink}" target="_blank" style="color: #d97706; text-decoration: underline;">
+                ${resetLink}
+              </a>
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #ede8de; margin: 0 0 20px 0;" />
+
+            <p style="margin: 0; font-size: 11px; line-height: 1.5; color: #a8a29e;">
+              If you did not request this password reset, you can safely ignore this email.<br/><br/>
+              Best regards,<br/>
+              <strong style="color: #44403c;">The HandSpeak Team</strong>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return { subject, text, html };
+}
+
+export function getPasswordResetEmailTemplate(resetLink: string, fullName?: string): string {
+  return buildPasswordResetEmail({ resetLink, fullName }).html;
 }

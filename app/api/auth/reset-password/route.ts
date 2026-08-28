@@ -7,8 +7,11 @@ export const dynamic = "force-dynamic";
 function getTransporter() {
   const host = process.env.SMTP_HOST || "smtp.gmail.com";
   const port = Number(process.env.SMTP_PORT || 465);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
+  const user = process.env.SMTP_USER || process.env.NODEMAILER_EMAIL;
+  const pass =
+    process.env.SMTP_PASS ||
+    process.env.SMTP_PASSWORD ||
+    process.env.NODEMAILER_PASSWORD;
   const isSecure = process.env.SMTP_SECURE === "true" || port === 465;
 
   if (!host || !user || !pass) {
@@ -76,18 +79,39 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true }, { status: 200 });
       }
       return NextResponse.json(
-        { success: false, error: data?.error?.message || "Failed to generate password reset token." },
+        {
+          success: false,
+          error: data?.error?.message || "Failed to generate password reset token.",
+        },
         { status: 400 }
       );
     }
 
     const oobCode = data.oobCode;
+
+    if (!oobCode) {
+      console.error("[Firebase REST Error]: No oobCode returned in response payload.", data);
+      return NextResponse.json(
+        { success: false, error: "Could not generate secure reset code." },
+        { status: 500 }
+      );
+    }
+
+    // 2. Resolve Active Origin (Prefers env setting, then x-forwarded headers, then request URL)
+    const forwardedHost = request.headers.get("x-forwarded-host");
+    const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+    const headerOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : "";
+
     const origin =
       process.env.NEXT_PUBLIC_APP_URL ||
+      headerOrigin ||
       `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-    const resetLink = `${origin}/auth/reset-password?oobCode=${encodeURIComponent(oobCode)}&mode=resetPassword`;
 
-    // 2. Transporter Verification
+    const resetLink = `${origin}/auth/reset-password?oobCode=${encodeURIComponent(
+      oobCode
+    )}&mode=resetPassword`;
+
+    // 3. Transporter Verification
     const transporter = getTransporter();
     if (!transporter) {
       console.error("[SMTP Error] Transporter credentials are not configured.");
@@ -97,7 +121,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Branded HTML Email
+    // 4. Branded HTML Email
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; color: #1e293b;">
         <div style="margin-bottom: 24px;">
@@ -114,14 +138,14 @@ export async function POST(request: NextRequest) {
         </p>
 
         <div style="margin-bottom: 32px; text-align: center;">
-          <a href="${resetLink}" style="display: inline-block; background-color: #f5a623; color: #0f172a; font-size: 13px; font-weight: 800; text-decoration: none; padding: 14px 32px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.08em; box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);">
+          <a href="${resetLink}" target="_blank" style="display: inline-block; background-color: #f5a623; color: #0f172a; font-size: 13px; font-weight: 800; text-decoration: none; padding: 14px 32px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.08em; box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);">
             Reset Password
           </a>
         </div>
 
         <p style="font-size: 12px; line-height: 1.5; color: #64748b; margin-bottom: 24px;">
           If the button above does not work, copy and paste this link into your browser:<br/>
-          <a href="${resetLink}" style="color: #d97706; word-break: break-all; text-decoration: underline; font-size: 12px;">${resetLink}</a>
+          <a href="${resetLink}" target="_blank" style="color: #d97706; word-break: break-all; text-decoration: underline; font-size: 12px;">${resetLink}</a>
         </p>
 
         <hr style="border: none; border-top: 1px solid #f1f5f9; margin-bottom: 20px;" />
@@ -134,7 +158,8 @@ export async function POST(request: NextRequest) {
       </div>
     `;
 
-    const fromAddress = process.env.SMTP_FROM || `"HandSpeak Admin" <${process.env.SMTP_USER}>`;
+    const userEmail = process.env.SMTP_USER || process.env.NODEMAILER_EMAIL;
+    const fromAddress = process.env.SMTP_FROM || `"HandSpeak Admin" <${userEmail}>`;
 
     await transporter.sendMail({
       from: fromAddress,
