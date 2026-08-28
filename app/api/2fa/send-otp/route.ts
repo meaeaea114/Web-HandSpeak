@@ -105,11 +105,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const message =
-      typeof err?.message === "string" && err.message.includes("missing")
-        ? err.message
-        : "Failed to send verification code. Please try again.";
-
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: err?.message || "Failed to send verification code. Please try again.",
+        details: String(err)
+      }, 
+      { status: 500 }
+    );
   }
 }
