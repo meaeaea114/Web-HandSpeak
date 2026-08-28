@@ -2,64 +2,64 @@ import type { App } from "firebase-admin/app";
 import type { Auth } from "firebase-admin/auth";
 import type { Firestore } from "firebase-admin/firestore";
 
-let app: App | null = null;
+let adminApp: any = null;
 
-function getAdminSDK(): any {
-  return require("firebase-admin");
+function getFirebaseAdmin() {
+  if (!adminApp) {
+    // Dynamic require inside runtime execution to bypass Turbopack build static analysis
+    const admin = eval('require')("firebase-admin");
+    
+    if (!admin.apps.length) {
+      let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+      if (privateKey) {
+        privateKey = privateKey.replace(/^["']|["']$/g, "").trim();
+        privateKey = privateKey.replace(/\\n/g, "\n");
+      }
+
+      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/['",]/g, "").trim();
+      const projectId =
+        process.env.FIREBASE_PROJECT_ID ||
+        process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+        "handspeak-96d8d";
+
+      if (clientEmail && privateKey) {
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId,
+            clientEmail,
+            privateKey,
+          }),
+          storageBucket:
+            process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+            "handspeak-96d8d.firebasestorage.app",
+        });
+      } else {
+        admin.initializeApp({
+          projectId,
+          storageBucket:
+            process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+            "handspeak-96d8d.firebasestorage.app",
+        });
+      }
+    }
+    adminApp = admin;
+  }
+  return adminApp;
 }
 
 export function initAdmin(): App {
-  if (app) return app;
-  const admin = getAdminSDK();
-
-  if (admin.apps && admin.apps.length > 0) {
-    app = admin.apps[0];
-    return app!;
-  }
-
-  const projectId =
-    process.env.FIREBASE_PROJECT_ID ||
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    "handspeak-96d8d";
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/['",]/g, "").trim();
-
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-  if (privateKey) {
-    privateKey = privateKey.replace(/^["']|["']$/g, "").trim();
-    privateKey = privateKey.replace(/\\n/g, "\n");
-  }
-
-  if (clientEmail && privateKey) {
-    app = admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-      storageBucket:
-        process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-        "handspeak-96d8d.firebasestorage.app",
-    });
-    return app!;
-  }
-
-  app = admin.initializeApp({
-    projectId,
-    storageBucket:
-      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-      "handspeak-96d8d.firebasestorage.app",
-  });
-  return app!;
+  const admin = getFirebaseAdmin();
+  return admin.apps[0] as App;
 }
 
 export function getAdminAuth(): Auth {
-  initAdmin();
-  return getAdminSDK().auth();
+  const admin = getFirebaseAdmin();
+  return admin.auth() as Auth;
 }
 
 export function getAdminDb(): Firestore {
-  initAdmin();
-  return getAdminSDK().firestore();
+  const admin = getFirebaseAdmin();
+  return admin.firestore() as Firestore;
 }
 
 export const adminAuth = getAdminAuth;
