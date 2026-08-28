@@ -22,7 +22,8 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
-import { auth, db } from "./firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, db, storage } from "./firebase";
 import { User, Role as UserRole, AccountRequest, Permission, RBAC_CONFIG, resolveSystemRole } from "./rbac";
 
 export interface UserProfile {
@@ -57,10 +58,11 @@ export interface RegisterRequestPayload {
   proofFile?: File | null;
 }
 
-export const MAX_FILE_SIZE_BYTES = 800 * 1024;
+export const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+export const ALLOWED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 export const ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
-export const NAME_REGEX = /^[A-Za-z \s'-]{2,50}$/;
-export const MIDDLE_INITIAL_REGEX = /^[A-Za-z ]$/;
+export const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]{2,50}$/;
+export const MIDDLE_INITIAL_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ]$/;
 export const EMPLOYEE_ID_REGEX = /^[A-Za-z0-9-]{3,20}$/;
 export const APPROVED_INSTITUTIONAL_DOMAINS = ["handspeak.edu", "school.edu.ph", "handspeak.edu.ph"];
 
@@ -133,10 +135,10 @@ export function validateRegistrationPayload(data: RegisterRequestPayload): void 
   if (!data.idFile) {
     throw new Error("Official School ID document is required.");
   }
-  if (!ALLOWED_MIME_TYPES.includes(data.idFile.type) || data.idFile.size > MAX_FILE_SIZE_BYTES) {
+  if (!ALLOWED_MIME_TYPES.includes(data.idFile.type) || data.idFile.size > 800 * 1024) {
     throw new Error("ID document must be a JPG or PNG under 800 KB.");
   }
-  if (data.proofFile && (!ALLOWED_MIME_TYPES.includes(data.proofFile.type) || data.proofFile.size > MAX_FILE_SIZE_BYTES)) {
+  if (data.proofFile && (!ALLOWED_MIME_TYPES.includes(data.proofFile.type) || data.proofFile.size > 800 * 1024)) {
     throw new Error("Verification document must be a JPG or PNG under 800 KB.");
   }
 }
@@ -148,6 +150,25 @@ export function fileToBase64(file: File): Promise<string> {
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = (error) => reject(error);
   });
+}
+
+export async function uploadProfileAvatar(userId: string, file: File): Promise<string> {
+  if (!ALLOWED_IMAGE_MIME_TYPES.includes(file.type)) {
+    throw new Error("Invalid image format. Allowed formats: PNG, JPG, JPEG, WEBP.");
+  }
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    throw new Error("Image file size exceeds the 2MB limit.");
+  }
+
+  try {
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const storageRef = ref(storage, `avatars/${userId}/profile_${Date.now()}.${fileExt}`);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  } catch (storageErr) {
+    console.warn("Storage bucket upload failed, using optimized Data URL fallback:", storageErr);
+    return await fileToBase64(file);
+  }
 }
 
 export async function checkExistingRegistration(email: string, employeeId: string): Promise<{ exists: boolean; reason?: string }> {
@@ -506,7 +527,7 @@ export async function resetPassword(name: string, email: string): Promise<void> 
   try {
     data = await response.json();
   } catch {
-    // Non-JSON response fallback
+    // Non-JSON fallback
   }
 
   if (!response.ok || !data.success) {
@@ -735,5 +756,75 @@ export async function updateUserProfile(
   data: Partial<User>
 ): Promise<void> {
   const userRef = doc(db, "users", userId);
-  await updateDoc(userRef, data);
+  await updateDoc(userRef, {
+    ...data,
+    lastActive: "Just now"
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Two-Factor Authentication with Token-Claim Refresh
+// ---------------------------------------------------------------------------
+
+export type TwoFactorPurpose = "enable" | "disable" | "login";
+
+export interface TwoFactorRequestResult {
+  success: boolean;
+  error?: string;
+  maskedEmail?: string;
+}
+
+export interface TwoFactorConfirmResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function requestTwoFactorOtp(
+  fbUser: FirebaseUser,
+  purpose: TwoFactorPurpose
+): Promise<TwoFactorRequestResult> {
+  try {
+    const idToken = await fbUser.getIdToken();
+    const res = await fetch("/api/2fa/send-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ purpose }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || "Failed to send verification code." };
+    }
+    return { success: true, maskedEmail: data.maskedEmail };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Failed to send verification code." };
+  }
+}
+
+export async function confirmTwoFactorOtp(
+  fbUser: FirebaseUser,
+  code: string,
+  purpose: TwoFactorPurpose
+): Promise<TwoFactorConfirmResult> {
+  try {
+    const idToken = await fbUser.getIdToken();
+    const res = await fetch("/api/2fa/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ code, purpose }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || "Verification failed." };
+    }
+
+    // Force-refresh Firebase ID token to pull the twoFactorVerified: true claim immediately
+    await fbUser.getIdToken(true);
+    await fbUser.reload();
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Verification failed." };
+  }
 }

@@ -1,19 +1,48 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { formatAuthError } from "@/lib/auth-service";
-import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, User, ShieldCheck, AlertCircle, ArrowLeft } from "lucide-react";
+
+const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, pendingTwoFactor, verifyLoginTwoFactorCode, resendLoginTwoFactorCode, cancelTwoFactorLogin } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: "", email: "", password: "", rememberMe: false });
+
+  // OTP verification step state
+  const [otpCode, setOtpCode] = useState("");
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpResending, setOtpResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+  const [pendingRole, setPendingRole] = useState<string | null>(null);
+  const otpInputRef = useRef<HTMLInputElement>(null);
+
+  // Countdown for the "resend code" cooldown once the OTP step is shown.
+  useEffect(() => {
+    if (!pendingTwoFactor) return;
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
+  }, [pendingTwoFactor]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => Math.max(s - 1, 0)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  useEffect(() => {
+    if (pendingTwoFactor) {
+      otpInputRef.current?.focus();
+    }
+  }, [pendingTwoFactor]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,6 +75,14 @@ export default function LoginPage() {
       // 3. Authenticate with Firebase & Apply Persistence
       const result = await login(emailClean, formData.password, fullNameClean, formData.rememberMe);
 
+      if (result.success && result.status === "requires_2fa") {
+        // Password verified — a real OTP has been emailed. Stay on this page;
+        // `pendingTwoFactor` from context flips the UI to the verify step.
+        setPendingRole(result.role || null);
+        setIsLoading(false);
+        return;
+      }
+
       if (result.success && result.role) {
         if (result.role === "admin") {
           router.push("/dashboard/admin");
@@ -67,6 +104,53 @@ export default function LoginPage() {
       setError(formatAuthError(err.code || err.message || ""));
       setIsLoading(false);
     }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otpCode.trim().length !== 6) {
+      setOtpError("Please enter the 6-digit verification code.");
+      return;
+    }
+
+    setOtpVerifying(true);
+    setOtpError(null);
+
+    const result = await verifyLoginTwoFactorCode(otpCode.trim());
+    setOtpVerifying(false);
+
+    if (!result.success) {
+      setOtpError(result.error || "Invalid or expired code. Please try again.");
+      return;
+    }
+
+    const role = result.role || pendingRole;
+    if (role === "admin") {
+      router.push("/dashboard/admin");
+    } else {
+      router.push("/dashboard/teacher");
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || otpResending) return;
+    setOtpResending(true);
+    setOtpError(null);
+    const result = await resendLoginTwoFactorCode();
+    setOtpResending(false);
+
+    if (!result.success) {
+      setOtpError(result.error || "Failed to resend code. Please try again.");
+      return;
+    }
+    setResendCooldown(RESEND_COOLDOWN_SECONDS);
+  };
+
+  const handleCancelTwoFactor = async () => {
+    setOtpCode("");
+    setOtpError(null);
+    setIsLoading(false);
+    await cancelTwoFactorLogin();
   };
 
   const forgotPasswordHref = `/auth/forgot-password?name=${encodeURIComponent(formData.name.trim())}&email=${encodeURIComponent(formData.email.trim().toLowerCase())}`;
@@ -108,6 +192,77 @@ export default function LoginPage() {
 
         {/* Right Pane: 3D Interactive Console */}
         <div className="md:col-span-8 h-full p-6 sm:p-10 bg-white flex flex-col justify-between overflow-hidden">
+          {pendingTwoFactor ? (
+            <div className="w-full my-auto space-y-6">
+              <div>
+                <div className="h-12 w-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-4">
+                  <ShieldCheck className="h-6 w-6 text-amber-600" />
+                </div>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight">Two-Factor Verification</h1>
+                <p className="text-xs font-semibold text-slate-500 mt-1.5 leading-relaxed">
+                  We sent a 6-digit code to{" "}
+                  <strong className="text-slate-700">{pendingTwoFactor.maskedEmail}</strong>. Enter it below to
+                  finish signing in.
+                </p>
+              </div>
+
+              <form onSubmit={handleVerifyOtp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
+                    Verification Code
+                  </label>
+                  <input
+                    ref={otpInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="000000"
+                    disabled={otpVerifying}
+                    className="w-full h-14 px-4 bg-slate-50 border border-slate-200 rounded-xl shadow-[inset_1px_2px_4px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-2 focus:ring-amber-400 text-slate-900 text-2xl font-mono text-center tracking-[0.5em] disabled:opacity-50"
+                    value={otpCode}
+                    onChange={(e) => {
+                      setOtpCode(e.target.value.replace(/[^0-9]/g, ""));
+                      setOtpError(null);
+                    }}
+                  />
+                </div>
+
+                {otpError && (
+                  <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" /> {otpError}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={resendCooldown > 0 || otpResending}
+                    className="text-amber-600 hover:text-amber-700 hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                  >
+                    {otpResending ? "Sending…" : resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
+                  </button>
+                  <span className="text-slate-400">Code expires in 5 minutes</span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={otpVerifying || otpCode.length !== 6}
+                  className="w-full h-12 flex items-center justify-center bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 active:from-amber-700 active:to-amber-600 text-slate-955 text-sm font-extrabold uppercase tracking-wider rounded-xl shadow-[0_4px_12px_rgba(245,158,11,0.3),_inset_0_-4px_0_rgba(0,0,0,0.15)] hover:shadow-[0_2px_5px_rgba(245,158,11,0.2),_inset_0_-2px_0_rgba(0,0,0,0.15)] active:shadow-[inset_0_4px_6px_rgba(0,0,0,0.2)] transform active:translate-y-0.5 transition-all duration-100 disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  {otpVerifying ? "Verifying…" : "Verify & Continue"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancelTwoFactor}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors pt-1"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+                </button>
+              </form>
+            </div>
+          ) : (
           <div className="w-full my-auto space-y-6">
             <div>
               <h1 className="text-2xl font-black text-slate-900 tracking-tight">Account Sign In</h1>
@@ -207,13 +362,16 @@ export default function LoginPage() {
               </button>
             </form>
           </div>
+          )}
 
           {/* Create Account Link Footer Anchor */}
-          <div className="mt-4 border-t border-slate-100 pt-4 text-center">
-            <Link href="/auth/register" className="text-xs font-bold text-slate-500 hover:text-amber-500 hover:underline tracking-wide transition-all">
-              Create New Registration Request
-            </Link>
-          </div>
+          {!pendingTwoFactor && (
+            <div className="mt-4 border-t border-slate-100 pt-4 text-center">
+              <Link href="/auth/register" className="text-xs font-bold text-slate-500 hover:text-amber-500 hover:underline tracking-wide transition-all">
+                Create New Registration Request
+              </Link>
+            </div>
+          )}
         </div>
 
       </div>

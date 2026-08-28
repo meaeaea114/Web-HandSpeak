@@ -280,6 +280,104 @@ export function buildPasswordResetEmail(options: PasswordResetEmailOptions) {
   return { subject, text, html };
 }
 
+export interface TwoFactorOtpEmailOptions {
+  fullName?: string;
+  code: string;
+  purpose: "enable" | "disable" | "login";
+}
+
+export function buildTwoFactorOtpEmail(options: TwoFactorOtpEmailOptions) {
+  const { fullName, code, purpose } = options;
+  const greeting = fullName ? `Hello <span style="color: #b45309;">${fullName}</span>,` : "Hello,";
+
+  const badgeLabel =
+    purpose === "enable"
+      ? "Confirm Two-Factor Authentication"
+      : purpose === "disable"
+      ? "Confirm Disabling Two-Factor Authentication"
+      : "Sign-In Verification Code";
+
+  const bodyLine =
+    purpose === "enable"
+      ? "Enter this code to finish enabling Two-Factor Authentication on your HandSpeak account."
+      : purpose === "disable"
+      ? "Enter this code to confirm you want to turn Two-Factor Authentication OFF for your HandSpeak account."
+      : "Enter this code to finish signing in to your HandSpeak account.";
+
+  const subject =
+    purpose === "enable"
+      ? "Confirm Two-Factor Authentication — HandSpeak"
+      : purpose === "disable"
+      ? "Confirm Disabling Two-Factor Authentication — HandSpeak"
+      : "Your HandSpeak Sign-In Code";
+
+  const text = `${fullName ? `Hello ${fullName},` : "Hello,"}\n\n${bodyLine}\n\nYour verification code: ${code}\n\nThis code expires in 5 minutes. If you did not request this, you can safely ignore this email.\n\nBest regards,\nThe HandSpeak Team`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${badgeLabel}</title>
+    </head>
+    <body style="margin: 0; padding: 32px 16px; background-color: #f7f4ef; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(71, 35, 12, 0.08); border: 1px solid #ede8de;">
+
+        <!-- Header Banner with Warm Amber Gradient -->
+        <tr>
+          <td style="background: linear-gradient(135deg, #f5a623 0%, #e69512 100%); padding: 32px 36px; text-align: left;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+              <tr>
+                <td>
+                  <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #0f172a; letter-spacing: -0.02em;">HandSpeak</h1>
+                  <div style="display: inline-block; margin-top: 8px; background-color: rgba(255, 255, 255, 0.35); border: 1px solid rgba(255, 255, 255, 0.6); padding: 4px 12px; border-radius: 9999px;">
+                    <span style="font-size: 11px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.08em;">${badgeLabel}</span>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Body Content -->
+        <tr>
+          <td style="padding: 36px 36px 24px 36px;">
+            <p style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #292524;">
+              ${greeting}
+            </p>
+            <p style="margin: 0 0 28px 0; font-size: 14px; line-height: 1.65; color: #57534e;">
+              ${bodyLine} This code expires in <strong>5 minutes</strong>.
+            </p>
+
+            <!-- Code Display -->
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 28px;">
+              <tr>
+                <td align="center">
+                  <div style="display: inline-block; background-color: #faf8f5; border: 1px solid #e7e0d3; color: #292524; font-weight: 800; font-size: 30px; letter-spacing: 10px; padding: 16px 26px; border-radius: 14px;">
+                    ${code}
+                  </div>
+                </td>
+              </tr>
+            </table>
+
+            <hr style="border: none; border-top: 1px solid #ede8de; margin: 0 0 20px 0;" />
+
+            <p style="margin: 0; font-size: 11px; line-height: 1.5; color: #a8a29e;">
+              If you did not request this code, you can safely ignore this email — no changes will be made to your account.<br/><br/>
+              Best regards,<br/>
+              <strong style="color: #44403c;">The HandSpeak Team</strong>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return { subject, text, html };
+}
+
 export function getPasswordResetEmailTemplate(resetLink: string, fullName?: string): string {
   return buildPasswordResetEmail({ resetLink, fullName }).html;
 }

@@ -72,6 +72,8 @@ export interface User {
   archivedBy?: string;
   deactivatedAt?: string;
   deactivatedBy?: string;
+  /** Whether email-based Two-Factor Authentication is enabled for this account. */
+  twoFactorEnabled?: boolean;
 }
 
 export interface AccountRequest {

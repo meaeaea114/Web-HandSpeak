@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   User as UserIcon, KeyRound, Smartphone, CheckCircle2, 
   History, Laptop, Clock, LogOut, Lock, Save, Camera, AlertCircle,
-  Sliders, Activity, Globe, Calendar, Moon, ShieldCheck, X, Copy, Trash2, Archive, ArchiveRestore
+  Sliders, Activity, Globe, Calendar, Moon, Volume2, VolumeX,
+  ShieldCheck, X, Trash2, Archive, ArchiveRestore, Loader2
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { 
@@ -21,6 +22,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 import { usePreferences } from '@/lib/preferences-context';
 import { useTranslation } from '@/lib/translations';
@@ -49,7 +51,7 @@ const MAX_ACTIVE_ACTIVITIES = 75;
 const ARCHIVE_RETENTION_DAYS = 90;
 
 export default function AdminSettingsPage() {
-  const { user, updateUser } = useAuth();
+  const { user, firebaseUser, updateUser, sendTwoFactorOtp, confirmTwoFactorChange } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { preferences, updatePreference } = usePreferences();
@@ -75,6 +77,21 @@ export default function AdminSettingsPage() {
   const [accountActivities, setAccountActivities] = useState<FirestoreAccountActivity[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
 
+  // Password Management States
+  const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
+  const [passwordUpdating, setPasswordUpdating] = useState(false);
+
+  // 2FA Verification Modal States
+  const [twoFactor, setTwoFactor] = useState(false);
+  const [twoFactorAction, setTwoFactorAction] = useState<'enable' | 'disable' | null>(null);
+  const [show2FAModal, setShow2FAModal] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [otpMaskedEmail, setOtpMaskedEmail] = useState('');
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const formatRoleName = (rawRole?: string) => {
     if (!rawRole) return 'Administrator';
     const clean = rawRole.trim().toLowerCase();
@@ -88,15 +105,17 @@ export default function AdminSettingsPage() {
       setProfile({
         name: user.fullName || user.name || 'System Administrator',
         email: user.email || 'admin@handspeak.edu',
-        phone: authUser.phone || '',
+        phone: authUser.phone || authUser.contactNumber || '',
         role: formatRoleName(user.role),
         avatar: user.avatar || '',
       });
+      setTwoFactor(Boolean(authUser.twoFactorEnabled));
     }
   }, [user]);
 
   const currentUid = user?.id || (user as any)?.uid;
 
+  // Auto-cleanup for older activity logs
   const performAutomaticCleanup = async (activityRef: any) => {
     try {
       const activeQuery = query(activityRef, where('status', '==', 'active'));
@@ -157,6 +176,7 @@ export default function AdminSettingsPage() {
     }
   };
 
+  // Real-time Login History Listener
   useEffect(() => {
     if (!currentUid) {
       setLoginHistory([]);
@@ -183,6 +203,7 @@ export default function AdminSettingsPage() {
     return () => unsubscribe();
   }, [currentUid]);
 
+  // Real-time Account Activity Listener
   useEffect(() => {
     if (!currentUid) {
       setAccountActivities([]);
@@ -216,22 +237,12 @@ export default function AdminSettingsPage() {
     return () => unsubscribe();
   }, [currentUid]);
 
-  const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
-  
-  const [twoFactor, setTwoFactor] = useState(true);
-  const [show2FAModal, setShow2FAModal] = useState(false);
-  const [verificationCode, setVerificationCode] = useState('');
-  const [secretKey, setSecretKey] = useState('');
-
-  const generate2FAKey = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    let result = 'HS-';
-    for (let i = 0; i < 12; i++) {
-      if (i > 0 && i % 4 === 0) result += '-';
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setSecretKey(result);
-  };
+  // Resend-code timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => Math.max(s - 1, 0)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToast({ text, type });
@@ -250,7 +261,7 @@ export default function AdminSettingsPage() {
         const base64String = reader.result as string;
         setProfile((prev) => ({ ...prev, avatar: base64String }));
         await updateUser({ avatar: base64String });
-        await logAccountActivity('Profile picture updated', 'Updated avatar image.');
+        await logAccountActivity('Profile picture updated', 'Updated administrator avatar image.');
         showToast('Profile picture updated.');
       };
       reader.readAsDataURL(file);
@@ -270,7 +281,7 @@ export default function AdminSettingsPage() {
 
     const currentName = (user?.fullName || user?.name || '').trim();
     const currentEmail = (user?.email || '').trim();
-    const currentPhone = ((user as any)?.phone || '').trim();
+    const currentPhone = ((user as any)?.phone || (user as any)?.contactNumber || '').trim();
 
     const newName = profile.name.trim();
     const newEmail = profile.email.trim();
@@ -290,68 +301,115 @@ export default function AdminSettingsPage() {
       fullName: newName,
       email: newEmail,
       phone: newPhone,
+      contactNumber: newPhone,
       avatar: profile.avatar,
     });
 
-    if (phoneChanged && !nameChanged && !emailChanged) {
-      await logAccountActivity(
-        'Phone Number Updated', 
-        `Updated contact phone number to ${newPhone || 'empty'}.`
-      );
-    } else if (nameChanged && !phoneChanged && !emailChanged) {
-      await logAccountActivity(
-        'Display Name Updated', 
-        `Updated account display name to "${newName}".`
-      );
-    } else if (emailChanged && !nameChanged && !phoneChanged) {
-      await logAccountActivity(
-        'Email Address Updated', 
-        `Updated account email address to "${newEmail}".`
-      );
-    } else {
-      const changedFields = [];
-      if (nameChanged) changedFields.push('display name');
-      if (emailChanged) changedFields.push('email address');
-      if (phoneChanged) changedFields.push('phone number');
-      
-      await logAccountActivity(
-        'Profile Information Updated', 
-        `Updated ${changedFields.join(', ')}.`
-      );
-    }
+    const changedFields = [];
+    if (nameChanged) changedFields.push('display name');
+    if (emailChanged) changedFields.push('email address');
+    if (phoneChanged) changedFields.push('phone number');
+    
+    await logAccountActivity(
+      'Profile Information Updated', 
+      `Updated ${changedFields.join(', ')}.`
+    );
 
     showToast('Profile information updated successfully.');
   };
 
   const handle2FAToggle = async (checked: boolean) => {
-    if (checked) {
-      generate2FAKey();
-      setShow2FAModal(true);
-    } else {
-      setTwoFactor(false);
-      await logAccountActivity('Two-Factor Authentication disabled', 'Disabled 2FA security setting.');
-      showToast('Two-Factor Authentication disabled.');
-    }
-  };
+    const action: 'enable' | 'disable' = checked ? 'enable' : 'disable';
 
-  const verifyAndEnable2FA = async () => {
-    if (verificationCode.trim().length < 6) {
-      showToast('Please enter a valid 6-digit verification code.', 'error');
+    setOtpError(null);
+    setVerificationCode('');
+    setOtpSending(true);
+
+    const result = await sendTwoFactorOtp(action);
+
+    setOtpSending(false);
+
+    if (!result.success) {
+      showToast(result.error || 'Failed to send verification code. Please try again.', 'error');
       return;
     }
-    setTwoFactor(true);
+
+    setOtpMaskedEmail(result.maskedEmail || profile.email);
+    setTwoFactorAction(action);
+    setResendCooldown(30);
+    setShow2FAModal(true);
+  };
+
+  const verifyAndConfirmTwoFactor = async () => {
+    if (!twoFactorAction) return;
+
+    if (verificationCode.trim().length !== 6) {
+      setOtpError('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    setOtpVerifying(true);
+    setOtpError(null);
+
+    const result = await confirmTwoFactorChange(verificationCode.trim(), twoFactorAction);
+
+    setOtpVerifying(false);
+
+    if (!result.success) {
+      setOtpError(result.error || 'Invalid or expired code. Please try again.');
+      return;
+    }
+
+    const nowEnabled = twoFactorAction === 'enable';
+
+    setTwoFactor(nowEnabled);
     setShow2FAModal(false);
     setVerificationCode('');
-    await logAccountActivity('Two-Factor Authentication enabled', 'Successfully configured 2FA authenticator key.');
-    showToast('Two-Factor Authentication enabled successfully.');
+    setTwoFactorAction(null);
+
+    await logAccountActivity(
+      nowEnabled ? 'Two-Factor Authentication enabled' : 'Two-Factor Authentication disabled',
+      nowEnabled
+        ? 'Verified one-time email code and enabled 2FA.'
+        : 'Verified one-time email code and disabled 2FA.'
+    );
+    showToast(nowEnabled ? 'Two-Factor Authentication enabled successfully.' : 'Two-Factor Authentication disabled.');
+  };
+
+  const handleResendTwoFactorCode = async () => {
+    if (resendCooldown > 0 || otpSending || !twoFactorAction) return;
+
+    setOtpSending(true);
+    setOtpError(null);
+
+    const result = await sendTwoFactorOtp(twoFactorAction);
+
+    setOtpSending(false);
+
+    if (!result.success) {
+      setOtpError(result.error || 'Failed to resend code. Please try again.');
+      return;
+    }
+
+    setOtpMaskedEmail(result.maskedEmail || otpMaskedEmail);
+    setResendCooldown(30);
+    showToast('A new verification code was sent to your email.');
+  };
+
+  const closeTwoFactorModal = () => {
+    setShow2FAModal(false);
+    setOtpError(null);
+    setVerificationCode('');
+    setTwoFactorAction(null);
   };
 
   const handlePreferencesSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    await logAccountActivity('System preferences updated', `Updated language and system formats.`);
+    await logAccountActivity('System preferences updated', `Updated language, theme, and system formats.`);
     showToast(t('savePreferences') || 'System preferences saved.');
   };
 
+  // Fully connected Password Update Function (Firebase Auth + Firestore update + Activity Log)
   const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!passwords.current) {
@@ -379,9 +437,50 @@ export default function AdminSettingsPage() {
       return showToast('New passwords do not match.', 'error');
     }
 
-    setPasswords({ current: '', new: '', confirm: '' });
-    await logAccountActivity('Password changed', 'Account security password was successfully changed.');
-    showToast('Password changed successfully.');
+    setPasswordUpdating(true);
+
+    try {
+      if (firebaseUser && firebaseUser.email) {
+        // 1. Re-authenticate user with current password
+        const credential = EmailAuthProvider.credential(firebaseUser.email, passwords.current);
+        await reauthenticateWithCredential(firebaseUser, credential);
+
+        // 2. Update password in Firebase Authentication
+        await updatePassword(firebaseUser, newPass);
+      } else {
+        throw new Error('User session not found.');
+      }
+
+      // 3. Update Database metadata in Firestore users collection
+      if (currentUid) {
+        const userRef = doc(db, 'users', currentUid);
+        await updateDoc(userRef, {
+          passwordUpdatedAt: serverTimestamp(),
+          lastActive: 'Just now',
+        });
+      }
+
+      // 4. Log the security event in Firestore Account Activity
+      await logAccountActivity(
+        'Password Changed', 
+        'Account security password was successfully changed and updated in database.'
+      );
+
+      // 5. Reset input form state
+      setPasswords({ current: '', new: '', confirm: '' });
+      showToast('Password updated successfully in database.');
+    } catch (err: any) {
+      console.error('Password update error:', err);
+      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+        showToast('Current password is incorrect.', 'error');
+      } else if (err?.code === 'auth/too-many-requests') {
+        showToast('Too many attempts. Please try again later.', 'error');
+      } else {
+        showToast(err?.message || 'Failed to update password.', 'error');
+      }
+    } finally {
+      setPasswordUpdating(false);
+    }
   };
 
   const handleRemoveLoginRecord = async (id: string) => {
@@ -433,10 +532,6 @@ export default function AdminSettingsPage() {
 
   const fallbackAvatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
     profile.name || 'Admin'
-  )}`;
-
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-    `otpauth://totp/HandSpeak:${profile.email}?secret=${secretKey.replace(/-/g, '')}&issuer=HandSpeak`
   )}`;
 
   const displayDateTime = (ts: any) => {
@@ -502,10 +597,13 @@ export default function AdminSettingsPage() {
             <div className="flex items-center justify-between border-b dark:border-stone-800 pb-3">
               <div className="flex items-center gap-2 text-[#3C1E0A] dark:text-[#F0AB31]">
                 <ShieldCheck className="h-5 w-5 text-[#F0AB31]" />
-                <h3 className="font-bold text-sm text-stone-800 dark:text-stone-100">Configure 2FA Authenticator</h3>
+                <h3 className="font-bold text-sm text-stone-800 dark:text-stone-100">
+                  {twoFactorAction === 'disable' ? 'Confirm Disabling 2FA' : 'Verify Your Email'}
+                </h3>
               </div>
-              <button 
-                onClick={() => setShow2FAModal(false)}
+              <button
+                type="button"
+                onClick={closeTwoFactorModal}
                 className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 p-1 rounded-lg"
               >
                 <X className="h-4 w-4" />
@@ -513,53 +611,61 @@ export default function AdminSettingsPage() {
             </div>
 
             <p className="text-xs text-stone-500 dark:text-stone-400">
-              Scan this QR code with your authenticator app or enter the setup key manually.
+              We sent a 6-digit verification code to{' '}
+              <strong className="text-stone-700 dark:text-stone-200">{otpMaskedEmail || profile.email}</strong>.
+              Enter it below to {twoFactorAction === 'disable' ? 'confirm turning Two-Factor Authentication off' : 'finish enabling Two-Factor Authentication'}.
             </p>
-
-            <div className="flex flex-col items-center justify-center gap-3 p-4 bg-stone-50 dark:bg-[#151311] rounded-2xl border border-stone-200 dark:border-stone-800">
-              <div className="bg-white p-2 rounded-xl shadow-sm border border-stone-200 dark:border-transparent flex items-center justify-center">
-                <img src={qrCodeUrl} alt="2FA QR Code" className="h-32 w-32 object-contain" />
-              </div>
-              <div className="flex items-center gap-2 bg-stone-200/60 dark:bg-[#2A2621] px-3 py-1.5 rounded-lg text-[11px] font-mono text-stone-700 dark:text-stone-300">
-                <span>Key: {secretKey}</span>
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(secretKey);
-                    showToast('Secret key copied to clipboard!');
-                  }}
-                  className="hover:text-[#3C1E0A] dark:hover:text-[#F0AB31]"
-                >
-                  <Copy className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
 
             <div className="space-y-1.5 text-xs">
               <label className="font-bold text-stone-700 dark:text-stone-300">Verification Code</label>
               <input
                 type="text"
+                inputMode="numeric"
                 maxLength={6}
-                placeholder="Enter 6-digit code"
+                placeholder="000000"
+                autoFocus
                 value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
-                className="w-full px-4 py-2.5 text-center font-mono text-sm tracking-widest rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-[#151311] focus:outline-none focus:ring-2 focus:ring-[#F0AB31] dark:focus:ring-[#F0AB31]"
+                onChange={(e) => {
+                  setVerificationCode(e.target.value.replace(/[^0-9]/g, ''));
+                  setOtpError(null);
+                }}
+                className="w-full px-4 py-3 text-center font-mono text-lg tracking-[0.5em] rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-[#151311] focus:outline-none focus:ring-2 focus:ring-[#F0AB31] dark:focus:ring-[#F0AB31]"
               />
+              {otpError && (
+                <p className="text-[11px] text-red-600 dark:text-red-400 font-semibold flex items-center gap-1.5 pt-1">
+                  <AlertCircle className="h-3 w-3 shrink-0" /> {otpError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between text-[11px]">
+              <button
+                type="button"
+                onClick={handleResendTwoFactorCode}
+                disabled={resendCooldown > 0 || otpSending}
+                className="text-[#3C1E0A] dark:text-[#F0AB31] font-bold hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+              >
+                {otpSending ? 'Sending…' : resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
+              </button>
+              <span className="text-stone-400 dark:text-stone-500">Code expires in 5 minutes</span>
             </div>
 
             <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setShow2FAModal(false)}
+                onClick={closeTwoFactorModal}
                 className="w-1/2 py-2.5 bg-stone-100 dark:bg-[#2A2621] hover:bg-stone-200 dark:hover:bg-[#38332C] text-stone-700 dark:text-stone-300 font-bold text-xs rounded-xl transition-all"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={verifyAndEnable2FA}
-                className="w-1/2 py-2.5 bg-[#3C1E0A] dark:bg-[#F0AB31] hover:bg-[#261104] dark:hover:bg-[#d99720] text-white dark:text-[#1A1816] font-bold text-xs rounded-xl transition-all shadow-sm"
+                onClick={verifyAndConfirmTwoFactor}
+                disabled={otpVerifying || verificationCode.length !== 6}
+                className="w-1/2 py-2.5 bg-[#3C1E0A] dark:bg-[#F0AB31] hover:bg-[#261104] dark:hover:bg-[#d99720] text-white dark:text-[#1A1816] font-bold text-xs rounded-xl transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Verify & Enable
+                {otpVerifying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {otpVerifying ? 'Verifying…' : twoFactorAction === 'disable' ? 'Verify & Disable' : 'Verify & Enable'}
               </button>
             </div>
           </div>
@@ -626,7 +732,7 @@ export default function AdminSettingsPage() {
           </div>
         </nav>
 
-        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-full flex flex-col justify-between overflow-hidden">
+        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-full flex flex-col justify-between overflow-y-auto">
           {activeTab === 'profile' && (
             <form onSubmit={handleProfileSave} className="h-full flex flex-col justify-between">
               <div className="space-y-6">
@@ -727,17 +833,27 @@ export default function AdminSettingsPage() {
                     </div>
                     <div>
                       <p className="text-xs font-bold text-stone-800 dark:text-stone-200">Two-Factor Authentication (2FA)</p>
-                      <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">Require an authenticator code when logging in from unknown devices.</p>
+                      <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">
+                        {otpSending && !show2FAModal
+                          ? 'Sending a verification code to your email…'
+                          : 'Require a one-time email code when signing in.'}
+                      </p>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={twoFactor}
-                    onChange={(e) => handle2FAToggle(e.target.checked)}
-                    className="h-4 w-4 accent-[#3C1E0A] dark:accent-[#F0AB31] cursor-pointer rounded"
-                  />
+                  {otpSending && !show2FAModal ? (
+                    <Loader2 className="h-4 w-4 text-[#3C1E0A] dark:text-[#F0AB31] animate-spin" />
+                  ) : (
+                    <input
+                      type="checkbox"
+                      checked={twoFactor}
+                      disabled={otpSending || show2FAModal}
+                      onChange={(e) => handle2FAToggle(e.target.checked)}
+                      className="h-4 w-4 accent-[#3C1E0A] dark:accent-[#F0AB31] cursor-pointer rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  )}
                 </div>
 
+                {/* Connected Password Form */}
                 <form id="passwordForm" onSubmit={handlePasswordUpdate} className="space-y-3.5 text-xs">
                   <h3 className="font-bold text-stone-800 dark:text-stone-200 text-xs">Change Password</h3>
                   <div className="space-y-1.5">
@@ -786,8 +902,10 @@ export default function AdminSettingsPage() {
                 <button
                   type="submit"
                   form="passwordForm"
-                  className="bg-[#3C1E0A] dark:bg-[#2A2621] hover:bg-[#261104] dark:hover:bg-[#38332C] text-white dark:text-[#F0AB31] font-bold px-6 py-3 rounded-xl text-xs transition-all shadow-sm"
+                  disabled={passwordUpdating}
+                  className="bg-[#3C1E0A] dark:bg-[#2A2621] hover:bg-[#261104] dark:hover:bg-[#38332C] text-white dark:text-[#F0AB31] font-bold px-6 py-3 rounded-xl text-xs transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
                 >
+                  {passwordUpdating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   Update Password
                 </button>
               </div>
@@ -859,6 +977,31 @@ export default function AdminSettingsPage() {
                       <option value="dark">Dark Mode</option>
                       <option value="system">System Default</option>
                     </select>
+                  </div>
+
+                  <div className="space-y-2 sm:col-span-2">
+                    <label className="font-bold text-stone-700 dark:text-stone-300 flex items-center gap-2">
+                      {preferences.soundEnabled ? (
+                        <Volume2 className="h-4 w-4 text-[#3C1E0A] dark:text-[#F0AB31]" />
+                      ) : (
+                        <VolumeX className="h-4 w-4 text-[#3C1E0A] dark:text-[#F0AB31]" />
+                      )}
+                      Audio Feedback
+                    </label>
+                    <div className="flex items-center justify-between p-3.5 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-[#151311]">
+                      <span className="text-xs text-stone-500 dark:text-stone-400">Play notification and action audio cues</span>
+                      <button
+                        type="button"
+                        onClick={() => updatePreference('soundEnabled', !preferences.soundEnabled)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          preferences.soundEnabled
+                            ? 'bg-[#3C1E0A] text-[#F0AB31] dark:bg-[#F0AB31] dark:text-[#1A1816]'
+                            : 'bg-stone-100 dark:bg-stone-800 text-stone-500'
+                        }`}
+                      >
+                        {preferences.soundEnabled ? 'Enabled' : 'Muted'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

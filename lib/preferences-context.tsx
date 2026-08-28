@@ -12,6 +12,7 @@ export interface UserPreferences {
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
   timeFormat: '12h' | '24h';
   theme: Theme;
+  soundEnabled: boolean;
 }
 
 const defaultPreferences: UserPreferences = {
@@ -19,6 +20,7 @@ const defaultPreferences: UserPreferences = {
   dateFormat: 'MM/DD/YYYY',
   timeFormat: '12h',
   theme: 'system',
+  soundEnabled: true,
 };
 
 interface PreferencesContextType {
@@ -30,18 +32,13 @@ interface PreferencesContextType {
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
 
-// Local cache key used ONLY to render the correct theme instantly on the next
-// page load (avoids a light->dark flash while we wait on Firebase Auth to
-// resolve and Firestore to respond). Firestore remains the source of truth
-// for the actual preference values — this never substitutes for it.
 const THEME_CACHE_KEY = 'handspeak-theme-cache';
 
 function cacheThemeLocally(theme: Theme) {
   try {
     window.localStorage.setItem(THEME_CACHE_KEY, theme);
   } catch {
-    // localStorage may be unavailable (private browsing, disabled storage) —
-    // the app still works, it just may flash once on the next load.
+    // Local storage pass-through
   }
 }
 
@@ -61,7 +58,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
         return;
       }
       try {
-        const docRef = doc(db, 'admins', userId, 'settings', 'preferences');
+        const docRef = doc(db, 'users', userId, 'settings', 'preferences');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const fetched = { ...defaultPreferences, ...docSnap.data() } as UserPreferences;
@@ -80,11 +77,9 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     fetchPreferences();
   }, [userId]);
 
-  // Apply Tailwind & Background Theme Classes
+  // Apply Tailwind & Theme Classes
   useEffect(() => {
     const root = document.documentElement;
-    
-    // Strip all previous theme classes
     root.classList.remove('light', 'dark', 'theme-light', 'theme-dark', 'theme-system');
 
     if (preferences.theme === 'dark') {
@@ -101,7 +96,6 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setError(null);
     const previousPrefs = { ...preferences };
     
-    // Optimistic UI update
     setPreferences(prev => ({ ...prev, [key]: value }));
     if (key === 'theme') {
       cacheThemeLocally(value as Theme);
@@ -110,7 +104,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!userId) return;
 
     try {
-      const docRef = doc(db, 'admins', userId, 'settings', 'preferences');
+      const docRef = doc(db, 'users', userId, 'settings', 'preferences');
       await setDoc(docRef, { [key]: value }, { merge: true });
     } catch (err) {
       console.error("Failed to save preference:", err);

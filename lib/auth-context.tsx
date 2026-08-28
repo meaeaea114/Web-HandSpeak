@@ -17,8 +17,22 @@ import {
   submitAccountRequest,
   getUserProfile,
   updateUserProfile,
+  requestTwoFactorOtp,
+  confirmTwoFactorOtp,
+  TwoFactorPurpose,
   RegisterRequestPayload as RegisterRequestData,
 } from "./auth-service";
+
+interface PendingTwoFactor {
+  uid: string;
+  email: string;
+  maskedEmail: string;
+}
+
+interface TwoFactorActionResult {
+  success: boolean;
+  error?: string;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -32,9 +46,32 @@ interface AuthContextType {
   updateUser: (updatedData: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   can: (permission: Permission) => boolean;
   permissions: Permission[];
+
+  // Login-time 2FA (password verified, waiting on the emailed OTP)
+  pendingTwoFactor: PendingTwoFactor | null;
+  verifyLoginTwoFactorCode: (code: string) => Promise<{ success: boolean; error?: string; role?: Role }>;
+  resendLoginTwoFactorCode: () => Promise<{ success: boolean; error?: string; maskedEmail?: string }>;
+  cancelTwoFactorLogin: () => Promise<void>;
+
+  // Settings-time 2FA enable/disable
+  sendTwoFactorOtp: (purpose: "enable" | "disable") => Promise<{ success: boolean; error?: string; maskedEmail?: string }>;
+  confirmTwoFactorChange: (code: string, purpose: "enable" | "disable") => Promise<TwoFactorActionResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/**
+ * Checks whether this browser's session has cleared the 2FA challenge via custom claims.
+ */
+async function isTwoFactorVerifiedByClaims(fbUser: FirebaseUser): Promise<boolean> {
+  try {
+    const tokenResult = await fbUser.getIdTokenResult(true);
+    return tokenResult.claims?.twoFactorVerified === true;
+  } catch (err) {
+    console.error("Failed to read 2FA verification claim:", err);
+    return false; // fail closed
+  }
+}
 
 // Save real login activity event under user's Firestore collection
 async function recordLoginActivity(uid: string, email: string) {
@@ -65,14 +102,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [pendingTwoFactor, setPendingTwoFactor] = useState<PendingTwoFactor | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
+
         if (profile && profile.status === "active") {
-          setFirebaseUser(fbUser);
-          setUser(profile);
+          const requiresTwoFactor = Boolean(profile.twoFactorEnabled);
+          const alreadyVerified = requiresTwoFactor ? await isTwoFactorVerifiedByClaims(fbUser) : true;
+
+          if (requiresTwoFactor && !alreadyVerified) {
+            setFirebaseUser(fbUser);
+            setUser(null);
+            setPendingTwoFactor((prev) =>
+              prev && prev.uid === fbUser.uid
+                ? prev
+                : { uid: fbUser.uid, email: profile.email, maskedEmail: profile.email }
+            );
+          } else {
+            setFirebaseUser(fbUser);
+            setUser(profile);
+            setPendingTwoFactor(null);
+          }
         } else {
           setFirebaseUser(null);
           setUser(null);
@@ -80,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setFirebaseUser(null);
         setUser(null);
+        setPendingTwoFactor(null);
       }
       setIsLoading(false);
     });
@@ -146,16 +200,137 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      // 5. Record successful login event to Firestore
+      // 5. If 2FA is enabled for this account, ALWAYS trigger the 2FA verification flow
+      // on fresh login, reset the verified token, and send an OTP code.
+      if (profile.twoFactorEnabled) {
+        setFirebaseUser(fbUser);
+        setUser(null);
+
+        const otpResult = await requestTwoFactorOtp(fbUser, "login");
+        if (!otpResult.success) {
+          await logoutUser();
+          setFirebaseUser(null);
+          return {
+            success: false,
+            error: otpResult.error || "Failed to send your verification code. Please try again.",
+          };
+        }
+
+        setPendingTwoFactor({
+          uid: fbUser.uid,
+          email: profile.email,
+          maskedEmail: otpResult.maskedEmail || profile.email,
+        });
+
+        return { success: true, status: "requires_2fa", role: profile.role };
+      }
+
+      // 6. Record successful login event to Firestore
       await recordLoginActivity(fbUser.uid, fbUser.email || email);
 
       setUser(profile);
       setFirebaseUser(fbUser);
+      setPendingTwoFactor(null);
       return { success: true, role: profile.role };
     } catch (err: any) {
       return { success: false, error: err.code || err.message };
     }
   }, []);
+
+  const verifyLoginTwoFactorCode = useCallback(
+    async (code: string) => {
+      if (!firebaseUser || !pendingTwoFactor) {
+        return { success: false, error: "Your sign-in session has expired. Please log in again." };
+      }
+
+      // Server verifies the OTP and sets the custom claim
+      const result = await confirmTwoFactorOtp(firebaseUser, code, "login");
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+
+      // Force-refresh the ID token so the browser receives the new twoFactorVerified claim
+      try {
+        await firebaseUser.getIdToken(true);
+        await firebaseUser.reload();
+      } catch (err) {
+        console.error("Failed to refresh ID token after 2FA verification:", err);
+      }
+
+      const profile = await getUserProfile(firebaseUser.uid, firebaseUser.email, firebaseUser.displayName);
+      if (!profile) {
+        await logoutUser();
+        setFirebaseUser(null);
+        setPendingTwoFactor(null);
+        return { success: false, error: "Account record not found in system database." };
+      }
+
+      await recordLoginActivity(firebaseUser.uid, firebaseUser.email || profile.email);
+
+      setUser(profile);
+      setPendingTwoFactor(null);
+      return { success: true, role: profile.role };
+    },
+    [firebaseUser, pendingTwoFactor]
+  );
+
+  const resendLoginTwoFactorCode = useCallback(async () => {
+    if (!firebaseUser || !pendingTwoFactor) {
+      return { success: false, error: "Your sign-in session has expired. Please log in again." };
+    }
+
+    const result = await requestTwoFactorOtp(firebaseUser, "login");
+    if (result.success) {
+      setPendingTwoFactor((prev) => (prev ? { ...prev, maskedEmail: result.maskedEmail || prev.maskedEmail } : prev));
+    }
+    return result;
+  }, [firebaseUser, pendingTwoFactor]);
+
+  const cancelTwoFactorLogin = useCallback(async () => {
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error("Failed to cancel pending 2FA session:", err);
+    } finally {
+      setUser(null);
+      setFirebaseUser(null);
+      setPendingTwoFactor(null);
+    }
+  }, []);
+
+  const sendTwoFactorOtp = useCallback(
+    async (purpose: "enable" | "disable") => {
+      if (!firebaseUser) {
+        return { success: false, error: "No authenticated user found." };
+      }
+      return requestTwoFactorOtp(firebaseUser, purpose as TwoFactorPurpose);
+    },
+    [firebaseUser]
+  );
+
+  const confirmTwoFactorChange = useCallback(
+    async (code: string, purpose: "enable" | "disable"): Promise<TwoFactorActionResult> => {
+      if (!firebaseUser || !user) {
+        return { success: false, error: "No authenticated user found." };
+      }
+
+      const result = await confirmTwoFactorOtp(firebaseUser, code, purpose as TwoFactorPurpose);
+      if (!result.success) {
+        return result;
+      }
+
+      try {
+        await firebaseUser.getIdToken(true);
+        await firebaseUser.reload();
+      } catch (err) {
+        console.error("Failed to refresh token after 2FA change:", err);
+      }
+
+      setUser((prev) => (prev ? { ...prev, twoFactorEnabled: purpose === "enable" } : prev));
+      return { success: true };
+    },
+    [firebaseUser, user]
+  );
 
   const register = useCallback(async (data: RegisterRequestData) => {
     try {
@@ -196,6 +371,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setUser(null);
       setFirebaseUser(null);
+      setPendingTwoFactor(null);
     }
   }, []);
 
@@ -223,6 +399,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateUser,
         can,
         permissions,
+        pendingTwoFactor,
+        verifyLoginTwoFactorCode,
+        resendLoginTwoFactorCode,
+        cancelTwoFactorLogin,
+        sendTwoFactorOtp,
+        confirmTwoFactorChange,
       }}
     >
       {children}
