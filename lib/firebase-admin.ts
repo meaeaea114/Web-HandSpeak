@@ -1,4 +1,6 @@
 import { getApps, getApp, initializeApp, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 export function initAdmin() {
   if (getApps().length > 0) {
@@ -29,4 +31,12 @@ export function initAdmin() {
     projectId,
     storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "handspeak-96d8d.firebasestorage.app",
   });
+}
+
+export function getAdminAuth() {
+  return getAuth(initAdmin());
+}
+
+export function getAdminDb() {
+  return getFirestore(initAdmin());
 }

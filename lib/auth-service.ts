@@ -7,6 +7,9 @@ import {
   confirmPasswordReset,
   updateProfile,
   User as FirebaseUser,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
 } from "firebase/auth";
 import {
   setDoc,
@@ -413,7 +416,20 @@ export async function resendVerificationEmail(email: string, password: string): 
   }
 }
 
-export async function loginUser(email: string, password: string): Promise<FirebaseUser> {
+export async function loginUser(
+  email: string, 
+  password: string, 
+  rememberMe: boolean = false
+): Promise<FirebaseUser> {
+  try {
+    await setPersistence(
+      auth, 
+      rememberMe ? browserLocalPersistence : browserSessionPersistence
+    );
+  } catch (persistErr) {
+    console.warn("Failed to set Firebase auth persistence mode:", persistErr);
+  }
+
   const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
   const user = credential.user;
 
@@ -425,7 +441,6 @@ export async function loginUser(email: string, password: string): Promise<Fireba
       const userData = userDoc.data();
       const status = userData.status;
 
-      // 1. Block Rejected Users
       if (status === "rejected") {
         await firebaseSignOut(auth);
         throw new Error(
@@ -435,17 +450,20 @@ export async function loginUser(email: string, password: string): Promise<Fireba
         );
       }
 
-      // 2. Block Pending Users
       if (status === "pending") {
         await firebaseSignOut(auth);
         throw new Error("Your registration request is currently pending administrator review. You will receive an email once your account has been approved.");
       }
 
-      // 3. Block Inactive, Suspended, Archived, or Deactivated Users
       if (status === "deactivated" || status === "suspended" || status === "archived") {
         await firebaseSignOut(auth);
         throw new Error("This account is currently inactive or deactivated. Please contact support.");
       }
+
+      await updateDoc(userDocRef, {
+        lastActive: "Just now",
+        lastLogin: new Date().toISOString(),
+      });
     }
   } catch (err: any) {
     if (
@@ -467,24 +485,32 @@ export async function logoutUser(): Promise<void> {
   await firebaseSignOut(auth);
 }
 
-export async function resetPassword(email: string): Promise<void> {
-  const cleanEmail = email.trim().toLowerCase();
+export async function resetPassword(name: string, email: string): Promise<void> {
+  const cleanName = (name || "").trim();
+  const cleanEmail = (email || "").trim().toLowerCase();
+
+  if (!cleanName) {
+    throw new Error("Please enter the Full Name registered with your account.");
+  }
+  if (!cleanEmail || !cleanEmail.includes("@")) {
+    throw new Error("Please enter a valid institutional email address.");
+  }
 
   const response = await fetch("/api/auth/reset-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: cleanEmail }),
+    body: JSON.stringify({ name: cleanName, email: cleanEmail }),
   });
 
   let data: any = {};
   try {
     data = await response.json();
   } catch {
-    // Non-JSON response
+    // Non-JSON response fallback
   }
 
   if (!response.ok || !data.success) {
-    throw new Error(data.error || "Failed to send password reset email. Please try again.");
+    throw new Error(data.error || "Failed to process password reset. Please verify your credentials and try again.");
   }
 }
 
@@ -596,7 +622,6 @@ export async function approveAccountRequest(requestId: string, reviewerName: str
     reviewedBy: reviewerName,
   });
 
-  // Dispatch Nodemailer approval email
   try {
     const recipientEmail = reqData.email || reqData.loginEmail;
     if (recipientEmail) {
@@ -640,7 +665,6 @@ export async function rejectAccountRequest(requestId: string, reviewerName: stri
     reviewedBy: reviewerName,
   });
 
-  // Dispatch Nodemailer rejection email
   try {
     const recipientEmail = reqData.email || reqData.loginEmail;
     if (recipientEmail) {

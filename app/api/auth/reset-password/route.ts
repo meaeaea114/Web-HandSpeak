@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
+import { initAdmin } from "@/lib/firebase-admin";
+import { buildPasswordResetEmail } from "@/lib/email-templates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +30,14 @@ function getTransporter() {
   });
 }
 
+function normalize(str: string): string {
+  return (str || "")
+    .toLowerCase()
+    .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function POST(request: NextRequest) {
   try {
     let body: any;
@@ -38,66 +50,111 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email } = body;
+    const { name, email } = body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Please provide the registered Full Name." },
+        { status: 400 }
+      );
+    }
 
     if (!email || typeof email !== "string" || !email.trim()) {
       return NextResponse.json(
-        { success: false, error: "Please enter a valid institutional email address." },
+        { success: false, error: "Please enter your registered institutional email address." },
         { status: 400 }
       );
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+    const cleanName = name.trim();
 
-    if (!apiKey) {
-      console.error("[Reset Password] NEXT_PUBLIC_FIREBASE_API_KEY is missing.");
+    // 1. Initialize Firebase Admin App, Auth, and Firestore
+    const adminApp = initAdmin();
+    const adminAuth = getAuth(adminApp);
+    const adminDb = getFirestore(adminApp);
+
+    // 2. Strict Account Lookup in Firestore
+    let matchingUserDoc: any = null;
+
+    // A. Check 'users' collection by primary email
+    const usersSnap = await adminDb
+      .collection("users")
+      .where("email", "==", cleanEmail)
+      .limit(1)
+      .get();
+
+    if (!usersSnap.empty) {
+      matchingUserDoc = usersSnap.docs[0].data();
+    } else {
+      // B. Check 'users' collection by loginEmail alias
+      const loginEmailSnap = await adminDb
+        .collection("users")
+        .where("loginEmail", "==", cleanEmail)
+        .limit(1)
+        .get();
+
+      if (!loginEmailSnap.empty) {
+        matchingUserDoc = loginEmailSnap.docs[0].data();
+      }
+    }
+
+    // C. Check 'accountRequests' collection if not found in 'users'
+    if (!matchingUserDoc) {
+      const reqSnap = await adminDb
+        .collection("accountRequests")
+        .where("email", "==", cleanEmail)
+        .limit(1)
+        .get();
+
+      if (!reqSnap.empty) {
+        matchingUserDoc = reqSnap.docs[0].data();
+      }
+    }
+
+    // If account does not exist anywhere in the system
+    if (!matchingUserDoc) {
       return NextResponse.json(
-        { success: false, error: "Authentication service is not configured." },
-        { status: 500 }
+        { success: false, error: "No registered account was found with this email address." },
+        { status: 404 }
       );
     }
 
-    // 1. Request Password Reset code from Firebase Auth REST API
-    const response = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestType: "PASSWORD_RESET",
-          email: cleanEmail,
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("[Firebase REST Error]:", data);
-      if (data?.error?.message === "EMAIL_NOT_FOUND") {
-        return NextResponse.json({ success: true }, { status: 200 });
-      }
+    // Check account status
+    if (
+      matchingUserDoc.status === "rejected" || 
+      matchingUserDoc.status === "deactivated" || 
+      matchingUserDoc.status === "archived"
+    ) {
       return NextResponse.json(
-        {
-          success: false,
-          error: data?.error?.message || "Failed to generate password reset token.",
-        },
+        { success: false, error: "This account is currently inactive or deactivated. Password reset is not permitted." },
+        { status: 403 }
+      );
+    }
+
+    // 3. Strict Identity Validation: Verify that provided Name matches account record
+    const registeredFullName = matchingUserDoc.fullName || matchingUserDoc.name || "";
+    const registeredFirstName = matchingUserDoc.firstName || "";
+    const registeredLastName = matchingUserDoc.lastName || "";
+
+    const normalizedInputName = normalize(cleanName);
+    const normalizedFullName = normalize(registeredFullName);
+    const normalizedCombined = normalize(`${registeredFirstName} ${registeredLastName}`);
+
+    const nameMatches =
+      normalizedInputName === normalizedFullName ||
+      normalizedInputName === normalizedCombined ||
+      (normalizedFullName.includes(normalizedInputName) && normalizedInputName.length >= 3) ||
+      (normalizedInputName.includes(normalize(registeredLastName)) && normalizedInputName.includes(normalize(registeredFirstName)));
+
+    if (!nameMatches) {
+      return NextResponse.json(
+        { success: false, error: "The name and email address do not match an existing account." },
         { status: 400 }
       );
     }
 
-    const oobCode = data.oobCode;
-
-    if (!oobCode) {
-      console.error("[Firebase REST Error]: No oobCode returned in response payload.", data);
-      return NextResponse.json(
-        { success: false, error: "Could not generate secure reset code." },
-        { status: 500 }
-      );
-    }
-
-    // 2. Resolve Active Origin (Prefers env setting, then x-forwarded headers, then request URL)
+    // 4. Resolve Dynamic Origin for the Reset Link
     const forwardedHost = request.headers.get("x-forwarded-host");
     const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
     const headerOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : "";
@@ -107,11 +164,53 @@ export async function POST(request: NextRequest) {
       headerOrigin ||
       `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
-    const resetLink = `${origin}/auth/reset-password?oobCode=${encodeURIComponent(
-      oobCode
-    )}&mode=resetPassword`;
+    // 5. Generate Password Reset Link with Firebase Admin Auth
+    const actionCodeSettings = {
+      url: `${origin}/auth/reset-password`,
+      handleCodeInApp: true,
+    };
 
-    // 3. Transporter Verification
+    let resetLink: string;
+    try {
+      const generatedFirebaseLink = await adminAuth.generatePasswordResetLink(
+        cleanEmail,
+        actionCodeSettings
+      );
+
+      const parsedUrl = new URL(generatedFirebaseLink);
+      const oobCode = parsedUrl.searchParams.get("oobCode");
+
+      if (!oobCode) {
+        throw new Error("Unable to retrieve password reset code.");
+      }
+
+      resetLink = `${origin}/auth/reset-password?oobCode=${encodeURIComponent(
+        oobCode
+      )}&mode=resetPassword`;
+    } catch (adminErr: any) {
+      console.error("[Firebase Admin Generate Link Error]:", adminErr);
+      const errMessage = adminErr?.message || "";
+
+      if (errMessage.includes("RESET_PASSWORD_EXCEED_LIMIT")) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Too many reset attempts for this email. Please wait 15 minutes before requesting a new link.",
+          },
+          { status: 429 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Failed to generate password reset token. Please try again later.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // 6. Verify SMTP Transporter
     const transporter = getTransporter();
     if (!transporter) {
       console.error("[SMTP Error] Transporter credentials are not configured.");
@@ -121,42 +220,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Branded HTML Email
-    const htmlContent = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; color: #1e293b;">
-        <div style="margin-bottom: 24px;">
-          <h1 style="font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">HandSpeak Portal</h1>
-          <p style="font-size: 11px; font-weight: 700; color: #64748b; margin: 0; text-transform: uppercase; letter-spacing: 0.08em;">Password Recovery Request</p>
-        </div>
-
-        <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
-          Hello,
-        </p>
-
-        <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 28px;">
-          We received a request to reset the password for your HandSpeak account. Click the button below to choose a new password:
-        </p>
-
-        <div style="margin-bottom: 32px; text-align: center;">
-          <a href="${resetLink}" target="_blank" style="display: inline-block; background-color: #f5a623; color: #0f172a; font-size: 13px; font-weight: 800; text-decoration: none; padding: 14px 32px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.08em; box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);">
-            Reset Password
-          </a>
-        </div>
-
-        <p style="font-size: 12px; line-height: 1.5; color: #64748b; margin-bottom: 24px;">
-          If the button above does not work, copy and paste this link into your browser:<br/>
-          <a href="${resetLink}" target="_blank" style="color: #d97706; word-break: break-all; text-decoration: underline; font-size: 12px;">${resetLink}</a>
-        </p>
-
-        <hr style="border: none; border-top: 1px solid #f1f5f9; margin-bottom: 20px;" />
-
-        <p style="font-size: 11px; line-height: 1.5; color: #94a3b8; margin: 0;">
-          If you did not request this password reset, you can safely ignore this email.<br/><br/>
-          Best regards,<br/>
-          <strong>The HandSpeak Team</strong>
-        </p>
-      </div>
-    `;
+    // 7. Dispatch Branded Recovery Email
+    const { subject, html } = buildPasswordResetEmail({
+      fullName: registeredFullName || cleanName,
+      resetLink,
+    });
 
     const userEmail = process.env.SMTP_USER || process.env.NODEMAILER_EMAIL;
     const fromAddress = process.env.SMTP_FROM || `"HandSpeak Admin" <${userEmail}>`;
@@ -164,15 +232,15 @@ export async function POST(request: NextRequest) {
     await transporter.sendMail({
       from: fromAddress,
       to: cleanEmail,
-      subject: "Reset Your HandSpeak Password",
-      html: htmlContent,
+      subject,
+      html,
     });
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (err: any) {
     console.error("[SMTP Reset Password Error]:", err.message || err);
     return NextResponse.json(
-      { success: false, error: "Failed to dispatch password reset email. Please try again." },
+      { success: false, error: "Failed to process password reset request. Please try again." },
       { status: 500 }
     );
   }

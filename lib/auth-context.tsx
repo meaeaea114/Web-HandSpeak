@@ -1,7 +1,13 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { 
+  onAuthStateChanged, 
+  User as FirebaseUser,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
+} from "firebase/auth";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { User, Role, Permission, RBAC_CONFIG, hasPermission } from "./rbac";
@@ -20,7 +26,7 @@ interface AuthContextType {
   role: Role | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string, enteredFullName?: string) => Promise<{ success: boolean; error?: string; status?: string; role?: Role }>;
+  login: (email: string, password: string, enteredFullName?: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string; status?: string; role?: Role }>;
   register: (data: RegisterRequestData) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateUser: (updatedData: Partial<User>) => Promise<{ success: boolean; error?: string }>;
@@ -81,9 +87,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  const login = useCallback(async (email: string, password: string, enteredFullName?: string) => {
+  const login = useCallback(async (
+    email: string, 
+    password: string, 
+    enteredFullName?: string, 
+    rememberMe: boolean = false
+  ) => {
     try {
-      const fbUser = await loginUser(email, password);
+      // 1. Set Firebase client persistence based on Remember Me toggle
+      try {
+        await setPersistence(
+          auth,
+          rememberMe ? browserLocalPersistence : browserSessionPersistence
+        );
+      } catch (persistErr) {
+        console.warn("Failed to set Firebase Auth persistence mode:", persistErr);
+      }
+
+      // 2. Authenticate user
+      const fbUser = await loginUser(email, password, rememberMe);
       const profile = await getUserProfile(fbUser.uid, fbUser.email, fbUser.displayName);
 
       if (!profile) {
@@ -91,6 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: "Account record not found in system database." };
       }
 
+      // 3. Name verification against registered record
       if (enteredFullName) {
         const storedName = (profile.fullName || profile.name || "").trim().toLowerCase();
         const inputName = enteredFullName.trim().toLowerCase();
@@ -104,6 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // 4. Status checks
       if (profile.status === "archived") {
         await logoutUser();
         return {
@@ -122,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      // Record actual successful login event to Firestore
+      // 5. Record successful login event to Firestore
       await recordLoginActivity(fbUser.uid, fbUser.email || email);
 
       setUser(profile);

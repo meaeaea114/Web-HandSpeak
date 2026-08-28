@@ -43,8 +43,8 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // 3. Authenticate with Firebase & Verify against Firestore User Record
-      const result = await login(emailClean, formData.password, fullNameClean);
+      // 3. Authenticate with Firebase & Apply Persistence
+      const result = await login(emailClean, formData.password, fullNameClean, formData.rememberMe);
 
       if (result.success && result.role) {
         if (result.role === "admin") {
@@ -64,17 +64,15 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       console.error("Sign-in error:", err);
-      setError(formatAuthError(err.code || ""));
+      setError(formatAuthError(err.code || err.message || ""));
       setIsLoading(false);
     }
   };
 
+  const forgotPasswordHref = `/auth/forgot-password?name=${encodeURIComponent(formData.name.trim())}&email=${encodeURIComponent(formData.email.trim().toLowerCase())}`;
+
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
-      {/* Parchment background: the source texture isn't a seamless tile, so
-          bg-repeat produced visible hard seams at every tile boundary.
-          bg-cover/bg-center renders it as one clean, correctly-proportioned
-          image at any viewport size instead. */}
       <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
 
       {/* FIXED BOUNDARIES MASTER FRAME */}
@@ -82,7 +80,6 @@ export default function LoginPage() {
         
         {/* Left Pane: Campus Image Backdrop with Warm Yellow Glassmorphic Gradient Overlay */}
         <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative text-amber-955 text-center md:text-left overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
-          {/* Base Layer: School Building Photo */}
           <img 
             src="/images/school-building.jpg" 
             alt="School Campus" 
@@ -182,25 +179,25 @@ export default function LoginPage() {
                 <label className="flex items-center space-x-2 cursor-pointer select-none group">
                   <input
                     type="checkbox"
-                    className="w-4 h-4 text-amber-500 accent-amber-500 rounded border-slate-300 focus:ring-0 cursor-pointer shadow-sm shadow-inner"
+                    className="w-4 h-4 text-amber-500 accent-amber-500 rounded border-slate-300 focus:ring-0 cursor-pointer shadow-sm"
                     checked={formData.rememberMe}
                     onChange={(e) => setFormData({ ...formData, rememberMe: e.target.checked })}
                   />
                   <span className="group-hover:text-slate-900 transition-colors">Remember Me</span>
                 </label>
-                <Link href="/auth/forgot-password" className="text-slate-500 hover:text-amber-500 hover:underline transition-all">
+                <Link href={forgotPasswordHref} className="text-slate-500 hover:text-amber-500 hover:underline transition-all">
                   Forgot Password?
                 </Link>
               </div>
 
               {/* Error Message Section */}
               {error && (
-                <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100 animate-shake">
+                <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100">
                   {error}
                 </div>
               )}
 
-              {/* Premium 3D Action Submit Button with Active Loading State */}
+              {/* Action Submit Button */}
               <button
                 type="submit"
                 disabled={isLoading}
