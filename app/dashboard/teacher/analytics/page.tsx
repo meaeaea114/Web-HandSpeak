@@ -6,37 +6,45 @@ import {
   TrendingUp, 
   AlertTriangle, 
   Lightbulb, 
-  Users, 
-  GraduationCap, 
-  Zap, 
   Layers, 
+  Zap,
   Sparkles, 
   Search, 
   RefreshCw, 
   CheckCircle2, 
-  Eye, 
-  X, 
-  Send,
-  MessageSquarePlus,
   ShieldAlert,
   Activity,
-  Flame,
-  Clock,
   ArrowRight,
-  BookOpen
+  Brain,
+  Trophy,
+  ThumbsDown,
+  Lock
 } from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell
+} from 'recharts';
 import { 
   getStudentsRealtime, 
   Student, 
   computeComprehensiveAnalytics, 
   FourTierAnalytics, 
-  parseDateToMs, 
-  addTeacherNoteToStudent 
+  parseDateToMs 
 } from '@/lib/data-service';
+import { useAuth } from '@/lib/auth-context';
+import { fetchCohortAIInsights, fetchGestureAndActivitySummary, CohortAIInsights, GestureAccuracySummary } from '@/lib/ai-analytics-client';
+import { StudentProfileDrawer } from '@/components/dashboard/student-profile-drawer';
 
-type AnalyticsCategory = 'descriptive' | 'diagnostic' | 'predictive' | 'prescriptive';
+type AnalyticsCategory = 'descriptive' | 'diagnostic' | 'predictive' | 'prescriptive' | 'ai';
 
 export default function TeacherAnalyticsDashboardPage() {
+  const { user } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +57,48 @@ export default function TeacherAnalyticsDashboardPage() {
   const [selectedSection, setSelectedSection] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Inspection Drawer & Teacher Note Modal state
+  // Student inspection now reuses the shared Student Profile Drawer (avoids a duplicate UI)
   const [inspectedStudent, setInspectedStudent] = useState<Student | null>(null);
-  const [noteText, setNoteText] = useState<string>('');
-  const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
+
+  // AI Cohort Insights state (fetched on-demand, cached server-side)
+  const [aiInsights, setAiInsights] = useState<CohortAIInsights | null>(null);
+  const [aiLoading, setAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiCached, setAiCached] = useState<boolean>(false);
+  const [aiRequestedOnce, setAiRequestedOnce] = useState<boolean>(false);
+  const [gestureSummary, setGestureSummary] = useState<GestureAccuracySummary | null>(null);
 
   const standardGrades = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+
+  // Teacher access scope: unrestricted for admin/principal/department roles,
+  // limited to the teacher's assigned grade/sections otherwise. Analytics
+  // must never expose students outside this scope.
+  const isScopeRestricted = useMemo(() => {
+    if (!user) return false;
+    if (user.role !== 'teacher') return false;
+    const gradeIsAll = !user.assignedGrade || user.assignedGrade === 'All';
+    const sectionsAreAll = !user.assignedSections || user.assignedSections.length === 0 || user.assignedSections.includes('All');
+    return !gradeIsAll || !sectionsAreAll;
+  }, [user]);
+
+  const scopedStudents = useMemo(() => {
+    if (!isScopeRestricted || !user) return students;
+    return students.filter((s) => {
+      const studentGrade = (s.gradeLevel || '').toLowerCase().startsWith('grade') ? s.gradeLevel : `Grade ${s.gradeLevel}`;
+      const gradeMatches = !user.assignedGrade || user.assignedGrade === 'All' || studentGrade === user.assignedGrade;
+      const sectionMatches =
+        !user.assignedSections || user.assignedSections.length === 0 || user.assignedSections.includes('All') ||
+        user.assignedSections.includes(s.section);
+      return gradeMatches && sectionMatches;
+    });
+  }, [students, isScopeRestricted, user]);
+
+  const scopeLabel = useMemo(() => {
+    if (!isScopeRestricted || !user) return 'All Assigned Classes';
+    const grade = user.assignedGrade || 'Assigned Grade';
+    const sections = (user.assignedSections || []).filter((s) => s !== 'All').join(', ');
+    return sections ? `${grade} - ${sections}` : grade;
+  }, [isScopeRestricted, user]);
 
   useEffect(() => {
     setLoading(true);
@@ -76,19 +120,24 @@ export default function TeacherAnalyticsDashboardPage() {
     };
   }, []);
 
+  const availableGrades = useMemo(() => {
+    if (isScopeRestricted && user?.assignedGrade && user.assignedGrade !== 'All') return [user.assignedGrade];
+    return standardGrades;
+  }, [isScopeRestricted, user]);
+
   const availableSections = useMemo(() => {
     const sections = new Set<string>();
-    students.forEach((s) => {
+    scopedStudents.forEach((s) => {
       if (s.section && s.section !== 'General Section' && s.section !== 'N/A') {
         sections.add(s.section);
       }
     });
     return Array.from(sections).sort();
-  }, [students]);
+  }, [scopedStudents]);
 
-  // Filtered dataset
+  // Filtered dataset (scope-restricted first, then UI filters on top)
   const filteredStudents = useMemo(() => {
-    return students.filter((s) => {
+    return scopedStudents.filter((s) => {
       const studentGradeNormalized = (s.gradeLevel || '').toLowerCase().startsWith('grade') 
         ? s.gradeLevel 
         : `Grade ${s.gradeLevel}`;
@@ -102,9 +151,9 @@ export default function TeacherAnalyticsDashboardPage() {
         s.email.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesGrade && matchesSection && matchesSearch;
     });
-  }, [students, selectedGrade, selectedSection, searchQuery]);
+  }, [scopedStudents, selectedGrade, selectedSection, searchQuery]);
 
-  // 4-Tier Analytics Calculation
+  // 4-Tier Analytics Calculation (deterministic, from real Firestore data)
   const analytics: FourTierAnalytics = useMemo(() => {
     return computeComprehensiveAnalytics(filteredStudents);
   }, [filteredStudents]);
@@ -113,6 +162,72 @@ export default function TeacherAnalyticsDashboardPage() {
     if (!analytics.descriptive.classPerformance.length) return 100;
     return Math.max(...analytics.descriptive.classPerformance.map((c) => c.avgProgress), 10);
   }, [analytics.descriptive.classPerformance]);
+
+  // Student performance ranking (top & bottom by progress) — real data only
+  const rankedByProgress = useMemo(() => {
+    return [...filteredStudents]
+      .filter((s) => s.status !== 'archived')
+      .sort((a, b) => (b.progress || 0) - (a.progress || 0));
+  }, [filteredStudents]);
+
+  const topPerformers = rankedByProgress.slice(0, 5);
+  const bottomPerformers = [...rankedByProgress].reverse().slice(0, 5);
+
+  const chartData = useMemo(
+    () =>
+      analytics.descriptive.classPerformance.map((c) => ({
+        name: c.className,
+        avgProgress: c.avgProgress,
+        avgXp: c.avgXp,
+      })),
+    [analytics.descriptive.classPerformance]
+  );
+
+  useEffect(() => {
+    const studentIds = filteredStudents.map((s) => s.id || s.uid).filter(Boolean);
+    if (studentIds.length === 0) {
+      setGestureSummary({ hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 });
+      return;
+    }
+    let cancelled = false;
+    fetchGestureAndActivitySummary(studentIds).then((result) => {
+      if (cancelled) return;
+      if (result.success) setGestureSummary(result.gesture);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredStudents]);
+
+  const loadAIInsights = async (forceRefresh = false) => {
+    setAiLoading(true);
+    setAiError(null);
+    setAiRequestedOnce(true);
+    const studentIds = filteredStudents.map((s) => s.id || s.uid).filter(Boolean);
+    const emptyGesture: GestureAccuracySummary = { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 };
+    let gesture = gestureSummary || emptyGesture;
+    if (!gestureSummary) {
+      const gestureResult = await fetchGestureAndActivitySummary(studentIds);
+      gesture = gestureResult.success ? gestureResult.gesture : emptyGesture;
+      setGestureSummary(gesture);
+    }
+    const result = await fetchCohortAIInsights(scopeLabel, analytics, gesture, forceRefresh);
+    if (result.success) {
+      setAiInsights(result.insights);
+      setAiCached(result.cached);
+    } else {
+      setAiError(result.error);
+    }
+    setAiLoading(false);
+  };
+
+  const handleOpenAITab = () => {
+    setActiveCategory('ai');
+    if (!aiRequestedOnce) {
+      loadAIInsights(false);
+    }
+  };
 
   const formatActivityTime = (dateVal: any) => {
     const ms = parseDateToMs(dateVal);
@@ -124,31 +239,6 @@ export default function TeacherAnalyticsDashboardPage() {
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays}d ago`;
     return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-
-  const handleSaveTeacherNote = async () => {
-    if (!inspectedStudent || !noteText.trim()) return;
-    try {
-      setIsSubmittingNote(true);
-      const newNote = await addTeacherNoteToStudent(
-        inspectedStudent.id || inspectedStudent.uid,
-        noteText,
-        'Instructor',
-        'teacher_auth'
-      );
-      setInspectedStudent((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          teacherNotes: [newNote, ...(prev.teacherNotes || [])]
-        };
-      });
-      setNoteText('');
-    } catch (err) {
-      console.error('Failed to append teacher note:', err);
-    } finally {
-      setIsSubmittingNote(false);
-    }
   };
 
   if (loading && students.length === 0) {
@@ -195,15 +285,23 @@ export default function TeacherAnalyticsDashboardPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {isScopeRestricted && (
+            <div className="flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200" title="Analytics limited to your assigned classes">
+              <Lock className="h-3 w-3 text-amber-700" />
+              <span className="text-[10px] font-bold text-amber-800">{scopeLabel}</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5 bg-[#FAF6EE]/80 px-3 py-1 rounded-xl border border-amber-900/15">
             <span className="text-[10px] font-bold text-[#521903]/60 uppercase">Grade:</span>
             <select
               value={selectedGrade}
               onChange={(e) => setSelectedGrade(e.target.value)}
-              className="bg-transparent text-xs font-bold text-[#521903] outline-none cursor-pointer"
+              disabled={availableGrades.length === 1}
+              className="bg-transparent text-xs font-bold text-[#521903] outline-none cursor-pointer disabled:cursor-default"
             >
               <option value="all">All Grades</option>
-              {standardGrades.map((g) => (
+              {availableGrades.map((g) => (
                 <option key={g} value={g}>{g}</option>
               ))}
             </select>
@@ -292,6 +390,19 @@ export default function TeacherAnalyticsDashboardPage() {
               <Lightbulb className="h-4 w-4" />
               <span>Prescriptive Action Blueprint</span>
             </button>
+
+            {/* Tab 5: AI-Generated Insights */}
+            <button
+              onClick={handleOpenAITab}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-black transition-all cursor-pointer ${
+                activeCategory === 'ai'
+                  ? 'bg-[#3D1702] text-white shadow-md'
+                  : 'text-[#521903]/70 hover:bg-[#FAF6EE] hover:text-[#521903]'
+              }`}
+            >
+              <Brain className="h-4 w-4" />
+              <span>AI-Generated Insights</span>
+            </button>
           </div>
 
           <div className="p-3.5 bg-[#FAF6EE] rounded-2xl border border-amber-900/10 space-y-1">
@@ -307,7 +418,7 @@ export default function TeacherAnalyticsDashboardPage() {
           
           {/* TIER 1 VIEW: DESCRIPTIVE DETAILS */}
           {activeCategory === 'descriptive' && (
-            <div className="flex flex-col justify-between h-full space-y-3">
+            <div className="flex flex-col h-full space-y-3 overflow-y-auto pr-1">
               <div className="space-y-1 border-b border-slate-100 pb-2.5">
                 <h2 className="text-base font-black text-[#521903] tracking-tight">
                   Descriptive Analytics — &ldquo;What is happening?&rdquo;
@@ -345,7 +456,7 @@ export default function TeacherAnalyticsDashboardPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 bg-white rounded-2xl border border-amber-900/10 flex items-center justify-between">
                   <div>
                     <span className="text-[9px] font-bold text-[#521903]/60 uppercase">FSL Alphabet XP</span>
@@ -360,6 +471,112 @@ export default function TeacherAnalyticsDashboardPage() {
                     <p className="text-base font-black text-amber-800">{analytics.descriptive.numbersXp.toLocaleString()} XP</p>
                   </div>
                   <Sparkles className="h-4 w-4 text-amber-700" />
+                </div>
+
+                <div className="p-3 bg-white rounded-2xl border border-amber-900/10 flex items-center justify-between">
+                  <div>
+                    <span className="text-[9px] font-bold text-[#521903]/60 uppercase">Avg Stars / Streak</span>
+                    <p className="text-base font-black text-amber-800">{analytics.descriptive.avgStars} ⭐ · {analytics.descriptive.avgStreak}d 🔥</p>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-white rounded-2xl border border-amber-900/10 flex items-center justify-between">
+                  <div>
+                    <span className="text-[9px] font-bold text-[#521903]/60 uppercase">Active Today / This Week</span>
+                    <p className="text-base font-black text-emerald-700">{analytics.descriptive.activeToday} / {analytics.descriptive.activeThisWeek}</p>
+                  </div>
+                  <Activity className="h-4 w-4 text-emerald-600" />
+                </div>
+              </div>
+
+              {chartData.length > 1 && (
+                <div className="bg-white p-3 rounded-2xl border border-amber-900/10">
+                  <span className="text-[10px] font-bold uppercase text-[#521903]/70 block mb-1">Class Comparison — Avg Mastery %</span>
+                  <ResponsiveContainer width="100%" height={110}>
+                    <BarChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e7ddce" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#8a6a4a' }} interval={0} angle={-15} textAnchor="end" height={30} />
+                      <YAxis tick={{ fontSize: 9, fill: '#8a6a4a' }} domain={[0, 100]} />
+                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                      <Bar dataKey="avgProgress" radius={[4, 4, 0, 0]}>
+                        {chartData.map((entry, idx) => (
+                          <Cell key={idx} fill={entry.avgProgress >= 70 ? '#059669' : entry.avgProgress >= 40 ? '#F0AB31' : '#e11d48'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Gesture Recognition Accuracy — real data, or an honest empty state */}
+              <div className="bg-white p-3 rounded-2xl border border-amber-900/10 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-[#521903]/70 flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 text-amber-700" /> Gesture Recognition Accuracy
+                </span>
+                {gestureSummary === null ? (
+                  <p className="text-[11px] text-stone-400 italic">Loading gesture data...</p>
+                ) : gestureSummary.hasData ? (
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                      <span className="text-lg font-black text-[#521903]">{gestureSummary.overallAccuracy}%</span>
+                      <span className="text-[10.5px] text-stone-500 font-semibold ml-1.5">
+                        overall · {gestureSummary.totalAttempts} recorded attempts · {gestureSummary.signsMastered} signs mastered
+                      </span>
+                    </div>
+                    {gestureSummary.weakSigns.length > 0 && (
+                      <span className="text-[10.5px] text-rose-700 font-semibold">
+                        Weakest: {gestureSummary.weakSigns.slice(0, 3).map((s) => `${s.sign} (${s.accuracy}%)`).join(', ')}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-400 italic leading-relaxed">
+                    Insufficient gesture data — no recognition attempts have been recorded yet for students in this scope.
+                    This will populate automatically once the student-facing app records practice attempts.
+                  </p>
+                )}
+              </div>
+
+              {/* Student Performance Ranking */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white p-3 rounded-2xl border border-amber-900/10 space-y-1">
+                  <span className="text-[9px] font-black uppercase text-emerald-800 flex items-center gap-1">
+                    <Trophy className="h-3 w-3" /> Top Performers
+                  </span>
+                  {topPerformers.length === 0 ? (
+                    <p className="text-[10px] text-stone-400 italic">No student records in scope.</p>
+                  ) : (
+                    topPerformers.map((s) => (
+                      <button
+                        key={s.id || s.uid}
+                        onClick={() => setInspectedStudent(s)}
+                        className="w-full flex justify-between items-center text-[10.5px] py-0.5 hover:bg-emerald-50 rounded px-1 cursor-pointer"
+                      >
+                        <span className="font-bold text-[#521903] truncate">{s.fullName}</span>
+                        <span className="font-black text-emerald-700 shrink-0 ml-1">{s.progress}%</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="bg-white p-3 rounded-2xl border border-amber-900/10 space-y-1">
+                  <span className="text-[9px] font-black uppercase text-rose-700 flex items-center gap-1">
+                    <ThumbsDown className="h-3 w-3" /> Needs Attention
+                  </span>
+                  {bottomPerformers.length === 0 ? (
+                    <p className="text-[10px] text-stone-400 italic">No student records in scope.</p>
+                  ) : (
+                    bottomPerformers.map((s) => (
+                      <button
+                        key={s.id || s.uid}
+                        onClick={() => setInspectedStudent(s)}
+                        className="w-full flex justify-between items-center text-[10.5px] py-0.5 hover:bg-rose-50 rounded px-1 cursor-pointer"
+                      >
+                        <span className="font-bold text-[#521903] truncate">{s.fullName}</span>
+                        <span className="font-black text-rose-700 shrink-0 ml-1">{s.progress}%</span>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -414,6 +631,26 @@ export default function TeacherAnalyticsDashboardPage() {
 
               <div className="p-3 bg-[#FAF6EE] rounded-2xl border border-amber-900/10 text-[11px] text-[#521903]/80 font-medium">
                 <strong>Activity &amp; Streak Correlation:</strong> {analytics.diagnostic.streakCorrelation}
+              </div>
+
+              <div className="p-3 bg-white rounded-2xl border border-amber-900/10 space-y-1">
+                <span className="text-[10px] font-bold uppercase text-[#521903]/70 flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 text-amber-700" /> Frequently Misperformed Signs
+                </span>
+                {gestureSummary?.hasData && gestureSummary.weakSigns.length > 0 ? (
+                  <div className="divide-y divide-amber-900/10">
+                    {gestureSummary.weakSigns.map((s) => (
+                      <div key={`${s.module}-${s.sign}`} className="py-1 flex justify-between items-center text-[11px]">
+                        <span className="font-bold text-[#521903]">{s.sign} <span className="text-[9px] font-medium text-stone-400 uppercase">({s.module})</span></span>
+                        <span className="text-rose-700 font-semibold">{s.accuracy}% accuracy · {s.attempts} attempts</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-400 italic">
+                    Insufficient gesture-recognition data to identify repeated sign errors yet.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -511,7 +748,7 @@ export default function TeacherAnalyticsDashboardPage() {
               <div className="flex justify-end pt-1">
                 <button
                   onClick={() => {
-                    const firstStudent = students.find(s => s.progress < 25);
+                    const firstStudent = scopedStudents.find(s => s.progress < 25);
                     if (firstStudent) setInspectedStudent(firstStudent);
                   }}
                   className="px-4 py-2 bg-[#F2B33D] hover:bg-[#D99A26] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
@@ -523,117 +760,126 @@ export default function TeacherAnalyticsDashboardPage() {
             </div>
           )}
 
-        </div>
-      </div>
-
-      {/* QUICK STUDENT INSPECTION & INSTRUCTOR NOTE MODAL */}
-      {inspectedStudent && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3">
-          <div className="bg-[#FAF6EE] border border-amber-900/20 rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5 shadow-2xl space-y-3.5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between border-b border-amber-900/10 pb-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className="h-9 w-9 rounded-xl bg-amber-200 text-[#521903] font-black text-sm flex items-center justify-center shadow-inner">
-                  {(inspectedStudent.firstName || inspectedStudent.name || 'S').charAt(0).toUpperCase()}
-                </div>
+          {/* TIER 5 VIEW: AI-GENERATED INSIGHTS (GENUINE AI INTERPRETATION LAYER) */}
+          {activeCategory === 'ai' && (
+            <div className="flex flex-col h-full space-y-3 overflow-hidden">
+              <div className="space-y-1 border-b border-slate-100 pb-2.5 flex items-start justify-between shrink-0">
                 <div>
-                  <h3 className="text-sm font-black text-[#521903]">{inspectedStudent.fullName || inspectedStudent.name}</h3>
-                  <p className="text-[10px] text-[#521903]/60 font-medium">
-                    {inspectedStudent.studentId} · {inspectedStudent.gradeLevel} - {inspectedStudent.section} ({inspectedStudent.type})
+                  <h2 className="text-base font-black text-[#521903] tracking-tight flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4 text-[#F0AB31]" />
+                    AI-Generated Insights
+                  </h2>
+                  <p className="text-xs text-[#521903]/60 font-medium">
+                    Claude interprets the real cohort metrics above to explain patterns, forecast trends, and recommend actions.
                   </p>
                 </div>
-              </div>
-              <button
-                onClick={() => setInspectedStudent(null)}
-                className="p-1 rounded-full hover:bg-amber-900/10 text-[#521903]/60 hover:text-[#521903]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="bg-white/80 p-2 rounded-xl border border-amber-900/10">
-                <span className="text-[8.5px] font-bold text-[#521903]/60 uppercase">Progress</span>
-                <p className="text-sm font-black text-[#521903]">{inspectedStudent.progress || 0}%</p>
-              </div>
-              <div className="bg-white/80 p-2 rounded-xl border border-amber-900/10">
-                <span className="text-[8.5px] font-bold text-[#521903]/60 uppercase">Total XP</span>
-                <p className="text-sm font-black text-amber-700">{(inspectedStudent.gamification?.xp || 0).toLocaleString()}</p>
-              </div>
-              <div className="bg-white/80 p-2 rounded-xl border border-amber-900/10">
-                <span className="text-[8.5px] font-bold text-[#521903]/60 uppercase">Streak</span>
-                <p className="text-sm font-black text-amber-600">{inspectedStudent.gamification?.streak || 0}d</p>
-              </div>
-            </div>
-
-            <div className="bg-white/80 p-2.5 rounded-xl border border-amber-900/10 space-y-1 text-xs">
-              <h4 className="text-[9px] font-bold text-[#521903] uppercase">Curriculum Breakdown</h4>
-              <div className="flex justify-between items-center text-[10px]">
-                <span className="font-semibold text-[#521903]">Alphabet Mastery XP:</span>
-                <span className="font-bold text-amber-800">{inspectedStudent.gamification?.alphabetXp || 0} XP</span>
-              </div>
-              <div className="flex justify-between items-center text-[10px]">
-                <span className="font-semibold text-[#521903]">Numbers Mastery XP:</span>
-                <span className="font-bold text-amber-800">{inspectedStudent.gamification?.numbersXp || 0} XP</span>
-              </div>
-              <div className="flex justify-between items-center text-[10px]">
-                <span className="font-semibold text-[#521903]">Completed Lessons:</span>
-                <span className="font-bold text-[#521903]">{inspectedStudent.gamification?.completedLessons || 0} Lessons</span>
-              </div>
-            </div>
-
-            {/* Instructor Notes */}
-            <div className="space-y-1.5">
-              <h4 className="text-[9px] font-bold text-[#521903] uppercase flex items-center gap-1">
-                <MessageSquarePlus className="h-3.5 w-3.5 text-amber-800" />
-                Instructor Notes &amp; Observations
-              </h4>
-
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  placeholder="Add intervention note..."
-                  value={noteText}
-                  onChange={(e) => setNoteText(e.target.value)}
-                  className="flex-1 px-2.5 py-1 text-xs rounded-lg bg-white border border-amber-900/20 text-[#521903] placeholder:text-[#521903]/40 focus:outline-none"
-                />
                 <button
-                  onClick={handleSaveTeacherNote}
-                  disabled={isSubmittingNote || !noteText.trim()}
-                  className="px-3 py-1 bg-[#521903] text-white rounded-lg text-xs font-bold hover:bg-[#3d1202] disabled:opacity-50 flex items-center gap-1"
+                  onClick={() => loadAIInsights(true)}
+                  disabled={aiLoading}
+                  className="px-3 py-1.5 bg-[#521903] hover:bg-[#3d1202] text-white rounded-xl text-[10.5px] font-bold flex items-center gap-1.5 shrink-0 disabled:opacity-50 cursor-pointer"
                 >
-                  <Send className="h-3 w-3" />
-                  Save
+                  <RefreshCw className={`h-3 w-3 ${aiLoading ? 'animate-spin' : ''}`} />
+                  Refresh
                 </button>
               </div>
 
-              <div className="max-h-20 overflow-y-auto space-y-1 pt-0.5">
-                {(!inspectedStudent.teacherNotes || inspectedStudent.teacherNotes.length === 0) ? (
-                  <p className="text-[9px] text-[#521903]/50 italic text-center py-1">No notes added yet for this student.</p>
-                ) : (
-                  inspectedStudent.teacherNotes.map((note) => (
-                    <div key={note.id} className="p-1.5 bg-white/60 rounded-lg border border-amber-900/10 text-xs space-y-0.5">
-                      <div className="flex justify-between text-[8px] text-[#521903]/60 font-semibold">
-                        <span>{note.authorName}</span>
-                        <span>{formatActivityTime(note.createdAt)}</span>
-                      </div>
-                      <p className="text-[#521903] text-[10px] font-medium leading-tight">{note.content}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+              {aiLoading && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="h-6 w-6 animate-spin text-amber-700" />
+                  <span className="text-xs font-bold text-[#521903]/60">Analyzing cohort metrics with Claude...</span>
+                </div>
+              )}
 
-            <div className="pt-1 flex justify-end">
-              <button
-                onClick={() => setInspectedStudent(null)}
-                className="px-3.5 py-1.5 bg-[#FAF6EE] text-[#521903] border border-amber-900/20 rounded-xl text-xs font-bold hover:bg-amber-100 transition-colors"
-              >
-                Close
-              </button>
+              {!aiLoading && aiError && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-6">
+                  <AlertTriangle className="h-6 w-6 text-amber-600" />
+                  <p className="text-xs font-semibold text-[#521903]/70">{aiError}</p>
+                  <p className="text-[10.5px] text-[#521903]/50">The rule-based Descriptive, Diagnostic, Predictive, and Prescriptive tabs remain fully available.</p>
+                  <button
+                    onClick={() => loadAIInsights(false)}
+                    className="mt-1 px-3 py-1.5 bg-[#521903] text-white rounded-xl text-[10.5px] font-bold cursor-pointer"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+
+              {!aiLoading && !aiError && aiInsights && (
+                <div className="space-y-2.5 flex-1 overflow-y-auto pr-1">
+                  <div className="p-3 rounded-2xl bg-[#FAF6EE] border border-amber-900/10 space-y-1">
+                    <span className="text-[9px] font-black uppercase text-amber-900 flex items-center gap-1">
+                      <Brain className="h-3.5 w-3.5" /> Diagnostic Narrative
+                    </span>
+                    <p className="text-xs text-[#521903]/85 font-medium leading-relaxed">{aiInsights.diagnosticNarrative}</p>
+                    {aiInsights.diagnosticDrivers.length > 0 && (
+                      <ul className="pt-1 space-y-0.5">
+                        {aiInsights.diagnosticDrivers.map((d, i) => (
+                          <li key={i} className="text-[11px] text-[#521903]/70 font-medium">• {d}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-white border border-amber-900/10 space-y-1">
+                    <span className="text-[9px] font-black uppercase text-[#521903]/60 flex items-center gap-1">
+                      <TrendingUp className="h-3.5 w-3.5" /> Predictive Narrative
+                      <span className="text-[8px] font-bold normal-case text-stone-400">(estimate, not a guarantee)</span>
+                    </span>
+                    <p className="text-xs text-[#521903]/85 font-medium leading-relaxed">{aiInsights.predictiveNarrative}</p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase text-[#521903]/70">Prescriptive Recommendations</span>
+                    {aiInsights.prescriptiveRecommendations.length === 0 ? (
+                      <p className="text-[11px] text-stone-400 italic">No differentiated recommendations were generated for this scope.</p>
+                    ) : (
+                      aiInsights.prescriptiveRecommendations.map((rec, i) => (
+                        <div key={i} className="p-2.5 rounded-xl bg-white border border-amber-900/10 flex items-start gap-2">
+                          <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase shrink-0 mt-0.5 ${
+                            rec.priority === 'URGENT' ? 'bg-rose-600 text-white' :
+                            rec.priority === 'HIGH' ? 'bg-amber-500 text-white' :
+                            rec.priority === 'RECOMMENDED' ? 'bg-sky-600 text-white' :
+                            'bg-emerald-600 text-white'
+                          }`}>
+                            {rec.priority}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold text-[#521903]">{rec.targetScope}</p>
+                            <p className="text-[11px] text-[#521903]/80 font-medium leading-tight">{rec.action}</p>
+                            <p className="text-[10px] text-stone-400">Rationale: {rec.rationale}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {aiInsights.dataLimitations.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-stone-50 border border-dashed border-stone-300">
+                      <span className="text-[8.5px] font-bold text-stone-400 uppercase block mb-0.5">Data Limitations</span>
+                      {aiInsights.dataLimitations.map((s, i) => (
+                        <p key={i} className="text-[10px] text-stone-400 leading-tight">{s}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-[9px] text-stone-300 text-center pt-1">
+                    {aiCached ? 'Showing a recent AI analysis' : 'Freshly generated'} for {scopeLabel} · grounded in the real metrics shown in the other tabs
+                  </p>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
         </div>
-      )}
+      </div>
+
+      {/* SHARED STUDENT PROFILE DRAWER (reused across the app, includes an AI Insight tab) */}
+      <StudentProfileDrawer
+        student={inspectedStudent}
+        isOpen={!!inspectedStudent}
+        onClose={() => setInspectedStudent(null)}
+      />
+
 
     </div>
   );

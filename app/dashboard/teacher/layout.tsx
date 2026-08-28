@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
@@ -16,6 +16,7 @@ import {
   MessageSquare, 
   LogOut 
 } from 'lucide-react';
+import { getNotificationsRealtime } from '@/lib/data-service';
 
 export default function TeacherDashboardLayout({
   children,
@@ -25,6 +26,22 @@ export default function TeacherDashboardLayout({
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const unsubscribe = getNotificationsRealtime(
+      user.id,
+      (items) => setUnreadCount(items.filter((n) => !n.isRead).length),
+      () => setUnreadCount(0)
+    );
+
+    return () => unsubscribe();
+  }, [user?.id]);
 
   const modules = [
     { name: 'Dashboard', path: '/dashboard/teacher', icon: LayoutDashboard },
@@ -131,13 +148,18 @@ export default function TeacherDashboardLayout({
 
             <button 
               onClick={() => router.push('/dashboard/teacher/notifications')}
-              className={`p-2.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50 transition-all cursor-pointer ${
+              className={`relative p-2.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50 transition-all cursor-pointer ${
                 pathname.includes('/notifications')
                   ? 'bg-[#521903] text-white'
                   : 'bg-white/80 text-[#521903] hover:bg-white'
               }`}
             >
               <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#F8B936] text-[#521903] text-[9px] font-black flex items-center justify-center border border-white shadow-sm">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
             </button>
 
             <button 

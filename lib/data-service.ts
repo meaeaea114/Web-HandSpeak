@@ -13,7 +13,8 @@ import {
   orderBy,
   limit,
   arrayUnion,
-  writeBatch
+  writeBatch,
+  Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
 import * as XLSX from 'xlsx';
@@ -142,10 +143,57 @@ export interface Announcement {
   title: string;
   content: string;
   author?: string;
+  authorUid?: string;
   targetRole?: 'all' | 'admin' | 'teacher' | 'student';
+  targetType?: 'all' | 'specific';
+  targetUserIds?: string[];
+  status?: 'draft' | 'published';
   createdAt?: any;
+  updatedAt?: any;
+  publishedAt?: any;
   timestamp?: any;
   priority?: 'low' | 'normal' | 'high' | 'urgent';
+}
+
+export interface AnnouncementInput {
+  title: string;
+  content: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  targetType: 'all' | 'specific';
+  targetUserIds?: string[];
+}
+
+export interface NotificationItem {
+  id: string;
+  recipientUid: string;
+  type: 'announcement' | 'feedback';
+  title: string;
+  message: string;
+  relatedId?: string;
+  isRead: boolean;
+  createdAt?: any;
+  meta?: Record<string, any>;
+}
+
+export interface FeedbackThreadMessage {
+  senderUid: string;
+  senderName: string;
+  senderRole: string;
+  message: string;
+  timestamp: any;
+}
+
+export interface FeedbackItem {
+  id: string;
+  submittedByUid: string;
+  submittedByName: string;
+  submittedByRole: string;
+  subject: string;
+  category: 'general' | 'bug' | 'feature' | 'support';
+  status: 'pending' | 'in_review' | 'resolved' | 'closed';
+  thread: FeedbackThreadMessage[];
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface BulkUploadRowValidation {
@@ -1300,6 +1348,369 @@ export function getAnnouncementsRealtime(
     if (onError) onError(err);
     return () => {};
   }
+}
+
+export async function createAnnouncement(
+  input: AnnouncementInput,
+  authorUid: string,
+  authorName: string,
+  publish: boolean
+): Promise<string> {
+  const ref = doc(collection(db, 'announcements'));
+
+  await setDoc(ref, {
+    id: ref.id,
+    title: input.title,
+    content: input.content,
+    priority: input.priority,
+    author: authorName,
+    authorUid,
+    targetType: input.targetType,
+    targetUserIds: input.targetType === 'specific' ? (input.targetUserIds || []) : [],
+    status: publish ? 'published' : 'draft',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    publishedAt: publish ? serverTimestamp() : null,
+  });
+
+  if (publish) {
+    await notifyFacultyOfAnnouncement(ref.id, input, authorName);
+  }
+
+  return ref.id;
+}
+
+export async function updateAnnouncement(
+  id: string,
+  input: AnnouncementInput
+): Promise<void> {
+  const ref = doc(db, 'announcements', id);
+  await updateDoc(ref, {
+    title: input.title,
+    content: input.content,
+    priority: input.priority,
+    targetType: input.targetType,
+    targetUserIds: input.targetType === 'specific' ? (input.targetUserIds || []) : [],
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function publishAnnouncement(
+  id: string,
+  input: AnnouncementInput,
+  authorName?: string
+): Promise<void> {
+  const ref = doc(db, 'announcements', id);
+  await updateDoc(ref, {
+    status: 'published',
+    updatedAt: serverTimestamp(),
+    publishedAt: serverTimestamp(),
+  });
+  await notifyFacultyOfAnnouncement(id, input, authorName || 'Administrator');
+}
+
+export async function deleteAnnouncement(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'announcements', id));
+}
+
+async function notifyFacultyOfAnnouncement(
+  announcementId: string,
+  input: AnnouncementInput,
+  authorName: string
+): Promise<void> {
+  try {
+    let recipientUids: string[] = [];
+
+    if (input.targetType === 'specific') {
+      recipientUids = input.targetUserIds || [];
+    } else {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('role', '==', 'teacher'));
+      const snapshot = await getDocs(q);
+      recipientUids = snapshot.docs
+        .map((d) => d.data().uid || d.id)
+        .filter(Boolean);
+    }
+
+    if (recipientUids.length === 0) return;
+
+    const batch = writeBatch(db);
+    recipientUids.forEach((uid) => {
+      const notifRef = doc(collection(db, 'notifications'));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        recipientUid: uid,
+        type: 'announcement',
+        title: input.title,
+        message: input.content,
+        relatedId: announcementId,
+        isRead: false,
+        createdAt: serverTimestamp(),
+        meta: { priority: input.priority, author: authorName },
+      });
+    });
+
+    await batch.commit();
+  } catch (error) {
+    console.error('Error notifying faculty of announcement:', error);
+  }
+}
+
+// ==========================================
+// NOTIFICATIONS SERVICES
+// ==========================================
+
+export function getNotificationsRealtime(
+  uid: string,
+  onSuccess: (notifications: NotificationItem[]) => void,
+  onError?: (error: Error) => void
+) {
+  try {
+    const notificationsRef = collection(db, 'notifications');
+    const q = query(notificationsRef, where('recipientUid', '==', uid));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as NotificationItem[];
+
+        items.sort((a, b) => {
+          const aTime = a.createdAt?.seconds || 0;
+          const bTime = b.createdAt?.seconds || 0;
+          return bTime - aTime;
+        });
+
+        onSuccess(items);
+      },
+      (err) => {
+        console.error('Error in realtime notifications listener:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err: any) {
+    if (onError) onError(err);
+    return () => {};
+  }
+}
+
+export async function markNotificationAsRead(id: string): Promise<void> {
+  await updateDoc(doc(db, 'notifications', id), { isRead: true });
+}
+
+export async function markAllNotificationsAsRead(uid: string): Promise<void> {
+  const notificationsRef = collection(db, 'notifications');
+  const q = query(notificationsRef, where('recipientUid', '==', uid), where('isRead', '==', false));
+  const snapshot = await getDocs(q);
+
+  if (snapshot.empty) return;
+
+  const batch = writeBatch(db);
+  snapshot.docs.forEach((d) => {
+    batch.update(d.ref, { isRead: true });
+  });
+  await batch.commit();
+}
+
+async function createFeedbackNotification(
+  recipientUid: string,
+  feedbackId: string,
+  title: string,
+  message: string
+): Promise<void> {
+  try {
+    const ref = doc(collection(db, 'notifications'));
+    await setDoc(ref, {
+      id: ref.id,
+      recipientUid,
+      type: 'feedback',
+      title,
+      message,
+      relatedId: feedbackId,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error('Error creating feedback notification:', error);
+  }
+}
+
+// ==========================================
+// FEEDBACK & SUPPORT SERVICES
+// ==========================================
+
+export async function submitFeedback(data: {
+  submittedByUid: string;
+  submittedByName: string;
+  submittedByRole: string;
+  subject: string;
+  category: FeedbackItem['category'];
+  message: string;
+}): Promise<string> {
+  const ref = doc(collection(db, 'feedback'));
+
+  const firstMessage: FeedbackThreadMessage = {
+    senderUid: data.submittedByUid,
+    senderName: data.submittedByName,
+    senderRole: data.submittedByRole,
+    message: data.message,
+    timestamp: Timestamp.now(),
+  };
+
+  await setDoc(ref, {
+    id: ref.id,
+    submittedByUid: data.submittedByUid,
+    submittedByName: data.submittedByName,
+    submittedByRole: data.submittedByRole,
+    subject: data.subject,
+    category: data.category,
+    status: 'pending',
+    thread: [firstMessage],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return ref.id;
+}
+
+export function getMyFeedbackRealtime(
+  uid: string,
+  onSuccess: (items: FeedbackItem[]) => void,
+  onError?: (error: Error) => void
+) {
+  try {
+    const feedbackRef = collection(db, 'feedback');
+    const q = query(feedbackRef, where('submittedByUid', '==', uid));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as FeedbackItem[];
+        items.sort((a, b) => {
+          const aTime = a.createdAt?.seconds || 0;
+          const bTime = b.createdAt?.seconds || 0;
+          return bTime - aTime;
+        });
+        onSuccess(items);
+      },
+      (err) => {
+        console.error('Error in realtime feedback listener:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err: any) {
+    if (onError) onError(err);
+    return () => {};
+  }
+}
+
+export function getAllFeedbackRealtime(
+  onSuccess: (items: FeedbackItem[]) => void,
+  onError?: (error: Error) => void
+) {
+  try {
+    const feedbackRef = collection(db, 'feedback');
+    const q = query(feedbackRef, orderBy('createdAt', 'desc'));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as FeedbackItem[];
+        onSuccess(items);
+      },
+      (err) => {
+        console.error('Error in realtime admin feedback listener:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err: any) {
+    if (onError) onError(err);
+    return () => {};
+  }
+}
+
+export async function replyToFeedback(
+  feedbackId: string,
+  reply: {
+    senderUid: string;
+    senderName: string;
+    senderRole: string;
+    message: string;
+  },
+  newStatus: FeedbackItem['status'],
+  recipientUid: string,
+  subject: string
+): Promise<void> {
+  const ref = doc(db, 'feedback', feedbackId);
+
+  const threadMessage: FeedbackThreadMessage = {
+    senderUid: reply.senderUid,
+    senderName: reply.senderName,
+    senderRole: reply.senderRole,
+    message: reply.message,
+    timestamp: Timestamp.now(),
+  };
+
+  await updateDoc(ref, {
+    thread: arrayUnion(threadMessage),
+    status: newStatus,
+    updatedAt: serverTimestamp(),
+  });
+
+  await createFeedbackNotification(
+    recipientUid,
+    feedbackId,
+    `Update on: ${subject}`,
+    reply.message
+  );
+}
+
+export async function updateFeedbackStatus(
+  feedbackId: string,
+  newStatus: FeedbackItem['status'],
+  recipientUid: string,
+  subject: string
+): Promise<void> {
+  const ref = doc(db, 'feedback', feedbackId);
+  await updateDoc(ref, {
+    status: newStatus,
+    updatedAt: serverTimestamp(),
+  });
+
+  const statusLabel = newStatus.replace('_', ' ');
+  await createFeedbackNotification(
+    recipientUid,
+    feedbackId,
+    `Status updated: ${subject}`,
+    `Your request status was changed to "${statusLabel}".`
+  );
+}
+
+export async function addFeedbackFollowUp(
+  feedbackId: string,
+  reply: {
+    senderUid: string;
+    senderName: string;
+    senderRole: string;
+    message: string;
+  }
+): Promise<void> {
+  const ref = doc(db, 'feedback', feedbackId);
+
+  const threadMessage: FeedbackThreadMessage = {
+    senderUid: reply.senderUid,
+    senderName: reply.senderName,
+    senderRole: reply.senderRole,
+    message: reply.message,
+    timestamp: Timestamp.now(),
+  };
+
+  await updateDoc(ref, {
+    thread: arrayUnion(threadMessage),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 // ==========================================
