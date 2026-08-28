@@ -1,15 +1,15 @@
-import * as admin from "firebase-admin";
-import type { App } from "firebase-admin/app";
-import type { Auth } from "firebase-admin/auth";
-import type { Firestore } from "firebase-admin/firestore";
+import { initializeApp, getApps, getApp, cert, type App } from "firebase-admin/app";
+import { getAuth, type Auth } from "firebase-admin/auth";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 let app: App | null = null;
 
 export function initAdmin(): App {
   if (app) return app;
 
-  if (admin.apps.length > 0 && admin.apps[0]) {
-    app = admin.apps[0] as App;
+  const existingApps = getApps();
+  if (existingApps.length > 0) {
+    app = existingApps[0]!;
     return app;
   }
 
@@ -27,8 +27,8 @@ export function initAdmin(): App {
   }
 
   if (clientEmail && privateKey) {
-    app = admin.initializeApp({
-      credential: admin.credential.cert({
+    app = initializeApp({
+      credential: cert({
         projectId,
         clientEmail,
         privateKey,
@@ -40,7 +40,7 @@ export function initAdmin(): App {
     return app;
   }
 
-  app = admin.initializeApp({
+  app = initializeApp({
     projectId,
     storageBucket:
       process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
@@ -50,13 +50,13 @@ export function initAdmin(): App {
 }
 
 export function getAdminAuth(): Auth {
-  initAdmin();
-  return admin.auth();
+  const currentApp = initAdmin();
+  return getAuth(currentApp);
 }
 
 export function getAdminDb(): Firestore {
-  initAdmin();
-  return admin.firestore();
+  const currentApp = initAdmin();
+  return getFirestore(currentApp);
 }
 
 export const adminAuth = getAdminAuth;
