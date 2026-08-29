@@ -165,14 +165,24 @@ export interface AnnouncementInput {
 
 export interface NotificationItem {
   id: string;
-  recipientUid: string;
-  type: 'announcement' | 'feedback';
+  recipientUid?: string;
+  type: 'announcement' | 'feedback' | 'approval' | 'rejection';
   title: string;
   message: string;
   relatedId?: string;
   isRead: boolean;
   createdAt?: any;
   meta?: Record<string, any>;
+  // Aliases used by some client components (e.g. the teacher notifications
+  // page) that build synthetic notification items client-side from content
+  // submissions. Kept optional and separate from `recipientUid`/`meta` so
+  // existing Firestore-backed code (announcements, feedback notifications)
+  // that relies on those original field names is unaffected.
+  userId?: string;
+  metadata?: {
+    submissionId?: string;
+    [key: string]: any;
+  };
 }
 
 export interface FeedbackThreadMessage {

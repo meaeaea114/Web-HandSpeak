@@ -319,7 +319,7 @@ export default function TeacherLeaderboardPage() {
           </div>
 
           {/* Bottom Row: Filter Dropdowns */}
-          <div className="flex items-center justify-end gap-2.5 pt-1 border-t border-stone-100 dark:border-[#382F2A]">
+          <div className="flex items-center flex-wrap justify-start sm:justify-end gap-2.5 pt-1 border-t border-stone-100 dark:border-[#382F2A]">
             <span className="text-xs font-bold text-stone-400 mr-1">Filter Cohort:</span>
             
             {/* Classification */}

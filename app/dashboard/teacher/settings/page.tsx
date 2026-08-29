@@ -1067,8 +1067,8 @@ export default function TeacherSettingsPage() {
           {activeTab === 'activity' && (
             <div className="h-full flex flex-col justify-between">
               <div className="space-y-4">
-                <div className="border-b border-stone-100 dark:border-stone-800 pb-3 flex items-center justify-between">
-                  <div>
+                <div className="border-b border-stone-100 dark:border-stone-800 pb-3 flex items-center flex-wrap gap-3 justify-between">
+                  <div className="min-w-0">
                     <h2 className="text-base font-bold text-[#3C1E0A] dark:text-[#F0AB31]">Account Activity Trace</h2>
                     <p className="text-xs text-stone-400 dark:text-stone-500 mt-0.5">Real-time audit log of updates and security changes made to your profile.</p>
                   </div>
@@ -1202,8 +1202,8 @@ export default function TeacherSettingsPage() {
           {activeTab === 'history' && (
             <div className="h-full flex flex-col justify-between">
               <div className="space-y-4">
-                <div className="border-b border-stone-100 dark:border-stone-800 pb-3 flex items-center justify-between">
-                  <div>
+                <div className="border-b border-stone-100 dark:border-stone-800 pb-3 flex items-center flex-wrap gap-3 justify-between">
+                  <div className="min-w-0">
                     <h2 className="text-base font-bold text-[#3C1E0A] dark:text-[#F0AB31]">Login Audit & Active Sessions</h2>
                     <p className="text-xs text-stone-400 dark:text-stone-500 mt-0.5">Review devices and timestamps that have accessed your teacher profile.</p>
                   </div>

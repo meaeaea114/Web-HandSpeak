@@ -1,12 +1,15 @@
+import type { Metadata } from 'next';
+import Script from 'next/script';
 import { AuthProvider } from '@/lib/auth-context';
 import { PreferencesProvider } from '@/lib/preferences-context';
 import './globals.css';
 
-// Runs synchronously in <head>, before the page paints, so the correct
-// theme class is already on <html> by the time the first pixel renders.
-// It only reads a lightweight local cache written by PreferencesProvider —
-// Firestore (fetched after auth resolves) remains the actual source of
-// truth and will correct this instantly if the cache is stale or missing.
+export const metadata: Metadata = {
+  title: 'HandSpeak - Teacher Dashboard',
+  description: 'Interactive FSL Learning and Activity Management',
+};
+
+// Script runs before page paints to prevent theme flicker
 const THEME_INIT_SCRIPT = `
 (function() {
   try {
@@ -26,15 +29,21 @@ const THEME_INIT_SCRIPT = `
 })();
 `;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* eslint-disable-next-line react/no-danger */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <Script
+          id="theme-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
+        />
       </head>
       <body className="antialiased" suppressHydrationWarning>
-        {/* These providers MUST wrap the children so useAuth works everywhere */}
         <AuthProvider>
           <PreferencesProvider>
             {children}

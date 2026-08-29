@@ -15,18 +15,12 @@ import {
   CheckCircle2, 
   Archive, 
   RotateCcw, 
-  Sparkles, 
   Send,
   Zap,
   Calendar,
   Layers,
   Award,
-  Brain,
-  AlertTriangle,
-  ThumbsUp,
-  ThumbsDown,
-  Lightbulb,
-  TrendingUp
+  Brain
 } from 'lucide-react';
 import { 
   Student, 
@@ -37,7 +31,16 @@ import {
   addTeacherNoteToStudent 
 } from '@/lib/data-service';
 import { useAuth } from '@/lib/auth-context';
-import { fetchStudentAIInsight, fetchGestureAndActivitySummary, StudentAIInsight, GestureAccuracySummary } from '@/lib/ai-analytics-client';
+import {
+  fetchGestureAndActivitySummary,
+  fetchStudentPillarInsight,
+  buildStudentDescriptivePayload,
+  buildStudentDiagnosticPayload,
+  buildStudentPredictivePayload,
+  buildStudentPrescriptivePayload,
+  GestureAccuracySummary,
+} from '@/lib/ai-analytics-client';
+import { PillarAIPanel } from '@/components/dashboard/pillar-ai-panel';
 
 interface StudentProfileDrawerProps {
   student: Student | null;
@@ -68,11 +71,7 @@ export function StudentProfileDrawer({
   const [isAddingNote, setIsAddingNote] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // AI Insight (fetched on-demand when the AI tab is opened, not on every drawer open)
-  const [aiInsight, setAiInsight] = useState<StudentAIInsight | null>(null);
-  const [aiLoading, setAiLoading] = useState<boolean>(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiCached, setAiCached] = useState<boolean>(false);
+  // Real gesture-recognition data for this student, shared as context by all four AI panels
   const [gestureSummary, setGestureSummary] = useState<GestureAccuracySummary | null>(null);
 
   useEffect(() => {
@@ -83,39 +82,60 @@ export function StudentProfileDrawer({
     setStatus((student.status === 'archived' ? 'archived' : student.status === 'deactivated' ? 'inactive' : 'active'));
     setDeepStudent(student);
     setActiveTab('overview');
-    setAiInsight(null);
-    setAiError(null);
+    setGestureSummary(null);
 
     getStudentDeepDetails(student.id).then((fullData) => {
       setDeepStudent((prev) => ({ ...(prev || student), ...fullData }));
     });
   }, [student, isOpen]);
 
-  const loadAIInsight = async (forceRefresh = false) => {
-    if (!student) return;
-    setAiLoading(true);
-    setAiError(null);
-    const subject = deepStudent || student;
-    const gestureResult = await fetchGestureAndActivitySummary([subject.id || subject.uid]);
-    const emptyGesture: GestureAccuracySummary = { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 };
-    const gesture = gestureResult.success ? gestureResult.gesture : emptyGesture;
-    setGestureSummary(gesture);
-    const result = await fetchStudentAIInsight(subject, gesture, forceRefresh);
-    if (result.success) {
-      setAiInsight(result.insight);
-      setAiCached(result.cached);
-    } else {
-      setAiError(result.error);
-    }
-    setAiLoading(false);
-  };
-
   const handleOpenAITab = () => {
     setActiveTab('ai');
-    if (!aiInsight && !aiLoading) {
-      loadAIInsight(false);
+    if (!gestureSummary && student) {
+      const subject = deepStudent || student;
+      fetchGestureAndActivitySummary([subject.id || subject.uid]).then((result) => {
+        setGestureSummary(
+          result.success
+            ? result.gesture
+            : { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 }
+        );
+      });
     }
   };
+
+  const gestureForPayload: GestureAccuracySummary =
+    gestureSummary || { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 };
+
+  const studentSubject = deepStudent || student;
+
+  const fetchStudentDescriptive = (forceRefresh: boolean) =>
+    fetchStudentPillarInsight(
+      'descriptive',
+      studentSubject?.id || studentSubject?.uid || '',
+      buildStudentDescriptivePayload(studentSubject!, gestureForPayload),
+      forceRefresh
+    );
+  const fetchStudentDiagnostic = (forceRefresh: boolean) =>
+    fetchStudentPillarInsight(
+      'diagnostic',
+      studentSubject?.id || studentSubject?.uid || '',
+      buildStudentDiagnosticPayload(studentSubject!, gestureForPayload),
+      forceRefresh
+    );
+  const fetchStudentPredictive = (forceRefresh: boolean) =>
+    fetchStudentPillarInsight(
+      'predictive',
+      studentSubject?.id || studentSubject?.uid || '',
+      buildStudentPredictivePayload(studentSubject!),
+      forceRefresh
+    );
+  const fetchStudentPrescriptive = (forceRefresh: boolean) =>
+    fetchStudentPillarInsight(
+      'prescriptive',
+      studentSubject?.id || studentSubject?.uid || '',
+      buildStudentPrescriptivePayload(studentSubject!, gestureForPayload),
+      forceRefresh
+    );
 
   if (!isOpen || !student) return null;
 
@@ -345,7 +365,7 @@ export function StudentProfileDrawer({
         </div>
 
         {/* Tab Views */}
-        <div className="flex-1 py-3 overflow-y-auto flex flex-col justify-between">
+        <div className="flex-1 py-3 overflow-hidden flex flex-col justify-between">
           
           {/* TAB 1: OVERVIEW & REAL GAMIFICATION POINTS */}
           {activeTab === 'overview' && (
@@ -399,7 +419,7 @@ export function StudentProfileDrawer({
               </div>
 
               {/* Real Gamification Stats Matrix */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
+              <div className="grid grid-cols-4 gap-1.5 text-center">
                 <div className="p-2 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A]">
                   <span className="text-[8.5px] font-black uppercase text-stone-400 block">Total XP</span>
                   <span className="text-xs font-black text-[#521903] dark:text-[#F0AB31] block mt-0.5">
@@ -531,168 +551,65 @@ export function StudentProfileDrawer({
             </div>
           )}
 
-          {/* TAB: AI-GENERATED STUDENT INSIGHT */}
+          {/* TAB: PER-STUDENT AI ANALYTICS — one independent panel per pillar */}
           {activeTab === 'ai' && (
-            <div className="flex-1 flex flex-col justify-between gap-2.5 overflow-hidden">
-              <div className="flex items-center justify-between shrink-0">
-                <span className="text-[10px] font-black uppercase tracking-wider text-stone-400 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-[#F0AB31]" />
-                  AI-Generated Insight
-                </span>
-                <button
-                  type="button"
-                  onClick={() => loadAIInsight(true)}
-                  disabled={aiLoading}
-                  className="text-[9.5px] font-bold text-amber-700 dark:text-[#F0AB31] hover:underline disabled:opacity-50 flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw className={`h-3 w-3 ${aiLoading ? 'animate-spin' : ''}`} />
-                  Refresh
-                </button>
-              </div>
-
-              {aiLoading && (
-                <div className="flex-1 flex flex-col items-center justify-center gap-2 py-10">
-                  <RefreshCw className="h-5 w-5 animate-spin text-amber-700" />
-                  <span className="text-[10px] font-bold text-stone-400">Analyzing student performance data...</span>
-                </div>
-              )}
-
-              {!aiLoading && aiError && (
-                <div className="flex-1 flex flex-col items-center justify-center gap-2 py-8 px-3 text-center">
-                  <AlertTriangle className="h-5 w-5 text-amber-600" />
-                  <p className="text-[10.5px] text-stone-500 dark:text-stone-400 font-medium leading-relaxed">{aiError}</p>
-                  <button
-                    type="button"
-                    onClick={() => loadAIInsight(false)}
-                    className="mt-1 px-3 py-1 bg-[#521903] dark:bg-[#D98A1C] text-white dark:text-[#110e0c] rounded-lg text-[10px] font-bold cursor-pointer"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              )}
-
-              {!aiLoading && !aiError && aiInsight && (
-                <div className="space-y-2 flex-1 overflow-y-auto pr-1 text-xs">
-                  {gestureSummary && (
-                    <div className="p-2.5 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A] space-y-1">
-                      <span className="text-[9px] font-black uppercase text-stone-400 flex items-center gap-1">
-                        <Zap className="h-3 w-3" /> Gesture Recognition Accuracy
-                        <span className="text-[8px] font-bold normal-case text-emerald-600">real data</span>
-                      </span>
-                      {gestureSummary.hasData ? (
-                        <>
-                          <p className="text-[10.5px] text-stone-700 dark:text-stone-300 font-medium">
-                            {gestureSummary.overallAccuracy}% overall accuracy across {gestureSummary.totalAttempts} recorded attempts.
-                          </p>
-                          {gestureSummary.weakSigns.length > 0 && (
-                            <p className="text-[10px] text-stone-500">
-                              Weakest signs: {gestureSummary.weakSigns.slice(0, 4).map((s) => `${s.sign} (${s.accuracy}%)`).join(', ')}
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        <p className="text-[10.5px] text-stone-400 italic">
-                          Insufficient gesture data — no recognition attempts have been recorded for this student yet.
+            <div className="flex-1 flex flex-col gap-2.5 overflow-y-auto pr-1">
+              {gestureSummary && (
+                <div className="p-2.5 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A] space-y-1 shrink-0">
+                  <span className="text-[9px] font-black uppercase text-stone-400 flex items-center gap-1">
+                    <Zap className="h-3 w-3" /> Gesture Recognition Accuracy
+                    <span className="text-[8px] font-bold normal-case text-emerald-600">real data</span>
+                  </span>
+                  {gestureSummary.hasData ? (
+                    <>
+                      <p className="text-[10.5px] text-stone-700 dark:text-stone-300 font-medium">
+                        {gestureSummary.overallAccuracy}% overall accuracy across {gestureSummary.totalAttempts} recorded attempts.
+                      </p>
+                      {gestureSummary.weakSigns.length > 0 && (
+                        <p className="text-[10px] text-stone-500">
+                          Weakest signs: {gestureSummary.weakSigns.slice(0, 4).map((s) => `${s.sign} (${s.accuracy}%)`).join(', ')}
                         </p>
                       )}
-                    </div>
-                  )}
-
-                  <p className="text-[11px] text-stone-700 dark:text-stone-300 font-medium leading-relaxed p-2.5 bg-stone-50 dark:bg-[#0D0B0A] rounded-xl border border-stone-200/70 dark:border-[#382F2A]">
-                    {aiInsight.studentSummary}
-                  </p>
-
-                  {aiInsight.strengths.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 space-y-1">
-                      <span className="text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
-                        <ThumbsUp className="h-3 w-3" /> Strengths
-                      </span>
-                      <ul className="space-y-0.5">
-                        {aiInsight.strengths.map((s, i) => (
-                          <li key={i} className="text-[10.5px] text-emerald-900 dark:text-emerald-200 font-medium">• {s}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {aiInsight.weaknesses.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 space-y-1">
-                      <span className="text-[9px] font-black uppercase text-rose-800 dark:text-rose-300 flex items-center gap-1">
-                        <ThumbsDown className="h-3 w-3" /> Weaknesses
-                      </span>
-                      <ul className="space-y-0.5">
-                        {aiInsight.weaknesses.map((s, i) => (
-                          <li key={i} className="text-[10.5px] text-rose-900 dark:text-rose-200 font-medium">• {s}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  <div className="p-2.5 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A] space-y-1">
-                    <span className="text-[9px] font-black uppercase text-stone-400 flex items-center gap-1">
-                      <Brain className="h-3 w-3" /> Diagnostic Insight
-                    </span>
-                    <p className="text-[10.5px] text-stone-700 dark:text-stone-300 font-medium leading-relaxed">
-                      {aiInsight.diagnosticInsight}
+                    </>
+                  ) : (
+                    <p className="text-[10.5px] text-stone-400 italic">
+                      Insufficient gesture data — no recognition attempts have been recorded for this student yet.
                     </p>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A] space-y-1">
-                    <span className="text-[9px] font-black uppercase text-stone-400 flex items-center gap-1">
-                      <TrendingUp className="h-3 w-3" /> Predictive Insight
-                      <span className="text-[8px] font-bold text-stone-400 normal-case">(estimate, not a guarantee)</span>
-                    </span>
-                    {aiInsight.predictiveInsight ? (
-                      <p className="text-[10.5px] text-stone-700 dark:text-stone-300 font-medium leading-relaxed">
-                        {aiInsight.predictiveInsight}
-                      </p>
-                    ) : (
-                      <p className="text-[10.5px] text-stone-400 italic font-medium leading-relaxed">
-                        {aiInsight.predictiveConfidenceNote || 'Not enough activity history yet to produce a reliable forecast for this student.'}
-                      </p>
-                    )}
-                  </div>
-
-                  {aiInsight.recommendedActivities.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-amber-50/70 dark:bg-[#2A231F]/40 border border-amber-200 dark:border-[#382F2A] space-y-1">
-                      <span className="text-[9px] font-black uppercase text-amber-800 dark:text-[#F0AB31] flex items-center gap-1">
-                        <Lightbulb className="h-3 w-3" /> Recommended Activities
-                      </span>
-                      <ul className="space-y-0.5">
-                        {aiInsight.recommendedActivities.map((s, i) => (
-                          <li key={i} className="text-[10.5px] text-amber-900 dark:text-amber-100 font-medium">• {s}</li>
-                        ))}
-                      </ul>
-                    </div>
                   )}
-
-                  {aiInsight.recommendedInterventions.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 space-y-1">
-                      <span className="text-[9px] font-black uppercase text-sky-800 dark:text-sky-300 flex items-center gap-1">
-                        <UserCheck className="h-3 w-3" /> Suggested Teacher Interventions
-                      </span>
-                      <ul className="space-y-0.5">
-                        {aiInsight.recommendedInterventions.map((s, i) => (
-                          <li key={i} className="text-[10.5px] text-sky-900 dark:text-sky-200 font-medium">• {s}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {aiInsight.dataLimitations.length > 0 && (
-                    <div className="p-2 rounded-xl bg-stone-50 dark:bg-[#0D0B0A] border border-dashed border-stone-300 dark:border-[#382F2A]">
-                      <span className="text-[8.5px] font-bold text-stone-400 uppercase block mb-0.5">Data Limitations</span>
-                      {aiInsight.dataLimitations.map((s, i) => (
-                        <p key={i} className="text-[9.5px] text-stone-400 leading-tight">{s}</p>
-                      ))}
-                    </div>
-                  )}
-
-                  <p className="text-[8.5px] text-stone-300 dark:text-stone-600 text-center pt-1">
-                    {aiCached ? 'Showing a recent AI analysis' : 'Freshly generated AI analysis'} · grounded in this student's real Firestore data
-                  </p>
                 </div>
               )}
+
+              <PillarAIPanel
+                pillar="descriptive"
+                title="AI Descriptive Interpretation"
+                question="What is happening with this student?"
+                fetcher={fetchStudentDescriptive}
+                dataReady={gestureSummary !== null}
+              />
+
+              <PillarAIPanel
+                pillar="diagnostic"
+                title="AI Diagnostic Interpretation"
+                question="Why is it happening?"
+                fetcher={fetchStudentDiagnostic}
+                dataReady={gestureSummary !== null}
+              />
+
+              <PillarAIPanel
+                pillar="predictive"
+                title="AI Predictive Forecast"
+                question="What is likely to happen?"
+                fetcher={fetchStudentPredictive}
+                dataReady={gestureSummary !== null}
+              />
+
+              <PillarAIPanel
+                pillar="prescriptive"
+                title="AI Prescriptive Recommendations"
+                question="What should the teacher do?"
+                fetcher={fetchStudentPrescriptive}
+                dataReady={gestureSummary !== null}
+              />
             </div>
           )}
 

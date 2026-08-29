@@ -21,6 +21,7 @@ import {
   serverTimestamp,
   doc,
   updateDoc,
+  addDoc,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { auth, db, storage } from "./firebase";
@@ -65,6 +66,24 @@ export const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]{2,50}$/;
 export const MIDDLE_INITIAL_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ]$/;
 export const EMPLOYEE_ID_REGEX = /^[A-Za-z0-9-]{3,20}$/;
 export const APPROVED_INSTITUTIONAL_DOMAINS = ["handspeak.edu", "school.edu.ph", "handspeak.edu.ph"];
+
+export function getDeviceNameFromUserAgent(userAgent?: string): string {
+  if (!userAgent && typeof navigator !== "undefined") {
+    userAgent = navigator.userAgent;
+  }
+  if (!userAgent) return "Web Browser";
+
+  if (/iPhone/i.test(userAgent)) return "iPhone (iOS)";
+  if (/iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1)) {
+    return "iPad (iPadOS)";
+  }
+  if (/iPod/i.test(userAgent)) return "iPod (iOS)";
+  if (/Android/i.test(userAgent)) return "Android Device";
+  if (/Macintosh|Mac OS X/i.test(userAgent)) return "macOS Desktop";
+  if (/Windows NT/i.test(userAgent)) return "Windows PC";
+  if (/Linux/i.test(userAgent)) return "Linux Workstation";
+  return "Web Browser Session";
+}
 
 export function formatAuthError(errorCode: string): string {
   switch (errorCode) {
@@ -481,10 +500,28 @@ export async function loginUser(
         throw new Error("This account is currently inactive or deactivated. Please contact support.");
       }
 
+      const currentIsoDate = new Date().toISOString();
+
       await updateDoc(userDocRef, {
         lastActive: "Just now",
-        lastLogin: new Date().toISOString(),
+        lastLogin: currentIsoDate,
       });
+
+      // Automatically register login activity session under the user document
+      try {
+        const deviceName = getDeviceNameFromUserAgent();
+        const loginActivityRef = collection(db, "users", user.uid, "login_activity");
+        await addDoc(loginActivityRef, {
+          device: deviceName,
+          email: user.email || email.trim().toLowerCase(),
+          status: "Success",
+          timestamp: serverTimestamp(),
+          loginDate: currentIsoDate,
+          uid: user.uid,
+        });
+      } catch (logErr) {
+        console.warn("Failed to record login_activity entry:", logErr);
+      }
     }
   } catch (err: any) {
     if (

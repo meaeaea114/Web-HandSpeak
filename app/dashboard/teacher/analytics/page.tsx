@@ -15,7 +15,6 @@ import {
   ShieldAlert,
   Activity,
   ArrowRight,
-  Brain,
   Trophy,
   ThumbsDown,
   Lock
@@ -38,10 +37,19 @@ import {
   parseDateToMs 
 } from '@/lib/data-service';
 import { useAuth } from '@/lib/auth-context';
-import { fetchCohortAIInsights, fetchGestureAndActivitySummary, CohortAIInsights, GestureAccuracySummary } from '@/lib/ai-analytics-client';
+import {
+  fetchGestureAndActivitySummary,
+  fetchCohortPillarInsight,
+  buildCohortDescriptivePayload,
+  buildCohortDiagnosticPayload,
+  buildCohortPredictivePayload,
+  buildCohortPrescriptivePayload,
+  GestureAccuracySummary,
+} from '@/lib/ai-analytics-client';
 import { StudentProfileDrawer } from '@/components/dashboard/student-profile-drawer';
+import { PillarAIPanel } from '@/components/dashboard/pillar-ai-panel';
 
-type AnalyticsCategory = 'descriptive' | 'diagnostic' | 'predictive' | 'prescriptive' | 'ai';
+type AnalyticsCategory = 'descriptive' | 'diagnostic' | 'predictive' | 'prescriptive';
 
 export default function TeacherAnalyticsDashboardPage() {
   const { user } = useAuth();
@@ -60,12 +68,7 @@ export default function TeacherAnalyticsDashboardPage() {
   // Student inspection now reuses the shared Student Profile Drawer (avoids a duplicate UI)
   const [inspectedStudent, setInspectedStudent] = useState<Student | null>(null);
 
-  // AI Cohort Insights state (fetched on-demand, cached server-side)
-  const [aiInsights, setAiInsights] = useState<CohortAIInsights | null>(null);
-  const [aiLoading, setAiLoading] = useState<boolean>(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiCached, setAiCached] = useState<boolean>(false);
-  const [aiRequestedOnce, setAiRequestedOnce] = useState<boolean>(false);
+  // Real gesture-recognition data, shared as context by every pillar's AI panel
   const [gestureSummary, setGestureSummary] = useState<GestureAccuracySummary | null>(null);
 
   const standardGrades = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
@@ -200,34 +203,19 @@ export default function TeacherAnalyticsDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredStudents]);
 
-  const loadAIInsights = async (forceRefresh = false) => {
-    setAiLoading(true);
-    setAiError(null);
-    setAiRequestedOnce(true);
-    const studentIds = filteredStudents.map((s) => s.id || s.uid).filter(Boolean);
-    const emptyGesture: GestureAccuracySummary = { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 };
-    let gesture = gestureSummary || emptyGesture;
-    if (!gestureSummary) {
-      const gestureResult = await fetchGestureAndActivitySummary(studentIds);
-      gesture = gestureResult.success ? gestureResult.gesture : emptyGesture;
-      setGestureSummary(gesture);
-    }
-    const result = await fetchCohortAIInsights(scopeLabel, analytics, gesture, forceRefresh);
-    if (result.success) {
-      setAiInsights(result.insights);
-      setAiCached(result.cached);
-    } else {
-      setAiError(result.error);
-    }
-    setAiLoading(false);
-  };
+  // Per-pillar AI fetchers — each builds ONLY the payload relevant to that
+  // pillar's analytical purpose and calls that pillar's dedicated endpoint.
+  // There is no combined/summary fetcher.
+  const gestureForPayload = gestureSummary || { hasData: false, totalAttempts: 0, overallAccuracy: null, perSign: [], weakSigns: [], signsMastered: 0 };
 
-  const handleOpenAITab = () => {
-    setActiveCategory('ai');
-    if (!aiRequestedOnce) {
-      loadAIInsights(false);
-    }
-  };
+  const fetchDescriptive = (forceRefresh: boolean) =>
+    fetchCohortPillarInsight('descriptive', buildCohortDescriptivePayload(scopeLabel, analytics, gestureForPayload), forceRefresh);
+  const fetchDiagnostic = (forceRefresh: boolean) =>
+    fetchCohortPillarInsight('diagnostic', buildCohortDiagnosticPayload(scopeLabel, analytics, gestureForPayload), forceRefresh);
+  const fetchPredictive = (forceRefresh: boolean) =>
+    fetchCohortPillarInsight('predictive', buildCohortPredictivePayload(scopeLabel, analytics), forceRefresh);
+  const fetchPrescriptive = (forceRefresh: boolean) =>
+    fetchCohortPillarInsight('prescriptive', buildCohortPrescriptivePayload(scopeLabel, analytics, gestureForPayload), forceRefresh);
 
   const formatActivityTime = (dateVal: any) => {
     const ms = parseDateToMs(dateVal);
@@ -269,11 +257,11 @@ export default function TeacherAnalyticsDashboardPage() {
   }
 
   return (
-    <div className="h-auto md:h-[calc(100vh-5rem)] flex flex-col justify-between p-1 max-w-[96rem] mx-auto overflow-visible md:overflow-hidden select-none gap-2.5">
+    <div className="h-[calc(100vh-5rem)] flex flex-col justify-between p-1 max-w-[96rem] mx-auto overflow-hidden select-none gap-2.5">
       
       {/* SECTION 1: TOP GLOBAL SEARCH & FILTER HEADER */}
       <div className="bg-white/85 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white/70 shadow-[3px_3px_12px_rgba(82,25,3,0.03)] flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
-        <div className="relative w-full sm:w-80">
+        <div className="relative w-80">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#521903]/40" />
           <input
             type="text"
@@ -284,7 +272,7 @@ export default function TeacherAnalyticsDashboardPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           {isScopeRestricted && (
             <div className="flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200" title="Analytics limited to your assigned classes">
               <Lock className="h-3 w-3 text-amber-700" />
@@ -330,7 +318,7 @@ export default function TeacherAnalyticsDashboardPage() {
       </div>
 
       {/* SECTION 2: MASTER / DETAIL 2-COLUMN PANELS (MATCHING IMAGE FORMAT) */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 flex-1 min-h-[640px] md:min-h-0">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 flex-1 min-h-0">
         
         {/* LEFT COLUMN: TIER CATEGORY SELECTOR (MATCHES SETTINGS NAVIGATION) */}
         <div className="md:col-span-4 bg-white/85 backdrop-blur-md p-4 rounded-3xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.03)] flex flex-col justify-between">
@@ -389,19 +377,6 @@ export default function TeacherAnalyticsDashboardPage() {
             >
               <Lightbulb className="h-4 w-4" />
               <span>Prescriptive Action Blueprint</span>
-            </button>
-
-            {/* Tab 5: AI-Generated Insights */}
-            <button
-              onClick={handleOpenAITab}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-black transition-all cursor-pointer ${
-                activeCategory === 'ai'
-                  ? 'bg-[#3D1702] text-white shadow-md'
-                  : 'text-[#521903]/70 hover:bg-[#FAF6EE] hover:text-[#521903]'
-              }`}
-            >
-              <Brain className="h-4 w-4" />
-              <span>AI-Generated Insights</span>
             </button>
           </div>
 
@@ -581,7 +556,7 @@ export default function TeacherAnalyticsDashboardPage() {
               </div>
 
               {/* Class Performance Roster */}
-              <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
                 <span className="text-[10px] font-bold uppercase text-[#521903]/70">Class Performance Benchmark</span>
                 <div className="divide-y divide-amber-900/10 bg-white p-3 rounded-2xl border border-amber-900/10">
                   {analytics.descriptive.classPerformance.map((c) => (
@@ -592,6 +567,14 @@ export default function TeacherAnalyticsDashboardPage() {
                   ))}
                 </div>
               </div>
+
+              <PillarAIPanel
+                pillar="descriptive"
+                title="AI Descriptive Interpretation"
+                question="What is happening?"
+                fetcher={fetchDescriptive}
+                dataReady={gestureSummary !== null}
+              />
             </div>
           )}
 
@@ -652,13 +635,21 @@ export default function TeacherAnalyticsDashboardPage() {
                   </p>
                 )}
               </div>
+
+              <PillarAIPanel
+                pillar="diagnostic"
+                title="AI Diagnostic Interpretation"
+                question="Why is it happening?"
+                fetcher={fetchDiagnostic}
+                dataReady={gestureSummary !== null}
+              />
             </div>
           )}
 
           {/* TIER 3 VIEW: PREDICTIVE DETAILS */}
           {activeCategory === 'predictive' && (
-            <div className="flex flex-col justify-between h-full space-y-3">
-              <div className="space-y-1 border-b border-slate-100 pb-2.5">
+            <div className="flex flex-col h-full space-y-3 overflow-y-auto pr-1">
+              <div className="space-y-1 border-b border-slate-100 pb-2.5 shrink-0">
                 <h2 className="text-base font-black text-[#521903] tracking-tight">
                   Predictive Analytics — &ldquo;What is likely to happen?&rdquo;
                 </h2>
@@ -667,9 +658,9 @@ export default function TeacherAnalyticsDashboardPage() {
                 </p>
               </div>
 
-              <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+              <div className="space-y-2">
                 {analytics.predictive.riskForecast.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-xs font-bold text-emerald-800 gap-1.5 py-12">
+                  <div className="flex items-center justify-center text-xs font-bold text-emerald-800 gap-1.5 py-8">
                     <CheckCircle2 className="h-5 w-5" /> All learners projected to sustain positive mastery velocity.
                   </div>
                 ) : (
@@ -695,17 +686,25 @@ export default function TeacherAnalyticsDashboardPage() {
                 )}
               </div>
 
-              <div className="p-3 bg-[#FAF6EE] rounded-2xl border border-amber-900/10 text-[11px] text-[#521903]/80 font-medium flex items-center justify-between">
+              <div className="p-3 bg-[#FAF6EE] rounded-2xl border border-amber-900/10 text-[11px] text-[#521903]/80 font-medium flex items-center justify-between flex-wrap gap-1">
                 <span>{analytics.predictive.summary}</span>
                 <span className="font-bold text-amber-800">Next Month Est: {analytics.predictive.projectedCohortAvgNextMonth}%</span>
               </div>
+
+              <PillarAIPanel
+                pillar="predictive"
+                title="AI Predictive Forecast"
+                question="What is likely to happen?"
+                fetcher={fetchPredictive}
+                dataReady={gestureSummary !== null}
+              />
             </div>
           )}
 
           {/* TIER 4 VIEW: PRESCRIPTIVE DETAILS */}
           {activeCategory === 'prescriptive' && (
-            <div className="flex flex-col justify-between h-full space-y-3">
-              <div className="space-y-1 border-b border-slate-100 pb-2.5">
+            <div className="flex flex-col h-full space-y-3 overflow-y-auto pr-1">
+              <div className="space-y-1 border-b border-slate-100 pb-2.5 shrink-0">
                 <h2 className="text-base font-black text-[#521903] tracking-tight">
                   Prescriptive Analytics — &ldquo;What should the teacher do?&rdquo;
                 </h2>
@@ -714,9 +713,9 @@ export default function TeacherAnalyticsDashboardPage() {
                 </p>
               </div>
 
-              <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+              <div className="space-y-2">
                 {analytics.prescriptive.directives.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-xs font-bold text-emerald-800 gap-1.5 py-12">
+                  <div className="flex items-center justify-center text-xs font-bold text-emerald-800 gap-1.5 py-8">
                     <CheckCircle2 className="h-5 w-5" /> No critical interventions needed. Learner velocity is optimal.
                   </div>
                 ) : (
@@ -757,118 +756,17 @@ export default function TeacherAnalyticsDashboardPage() {
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
+
+              <PillarAIPanel
+                pillar="prescriptive"
+                title="AI Prescriptive Recommendations"
+                question="What should the teacher do?"
+                fetcher={fetchPrescriptive}
+                dataReady={gestureSummary !== null}
+              />
             </div>
           )}
 
-          {/* TIER 5 VIEW: AI-GENERATED INSIGHTS (GENUINE AI INTERPRETATION LAYER) */}
-          {activeCategory === 'ai' && (
-            <div className="flex flex-col h-full space-y-3 overflow-hidden">
-              <div className="space-y-1 border-b border-slate-100 pb-2.5 flex items-start justify-between shrink-0">
-                <div>
-                  <h2 className="text-base font-black text-[#521903] tracking-tight flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 text-[#F0AB31]" />
-                    AI-Generated Insights
-                  </h2>
-                  <p className="text-xs text-[#521903]/60 font-medium">
-                    Claude interprets the real cohort metrics above to explain patterns, forecast trends, and recommend actions.
-                  </p>
-                </div>
-                <button
-                  onClick={() => loadAIInsights(true)}
-                  disabled={aiLoading}
-                  className="px-3 py-1.5 bg-[#521903] hover:bg-[#3d1202] text-white rounded-xl text-[10.5px] font-bold flex items-center gap-1.5 shrink-0 disabled:opacity-50 cursor-pointer"
-                >
-                  <RefreshCw className={`h-3 w-3 ${aiLoading ? 'animate-spin' : ''}`} />
-                  Refresh
-                </button>
-              </div>
-
-              {aiLoading && (
-                <div className="flex-1 flex flex-col items-center justify-center gap-2">
-                  <RefreshCw className="h-6 w-6 animate-spin text-amber-700" />
-                  <span className="text-xs font-bold text-[#521903]/60">Analyzing cohort metrics with Claude...</span>
-                </div>
-              )}
-
-              {!aiLoading && aiError && (
-                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-6">
-                  <AlertTriangle className="h-6 w-6 text-amber-600" />
-                  <p className="text-xs font-semibold text-[#521903]/70">{aiError}</p>
-                  <p className="text-[10.5px] text-[#521903]/50">The rule-based Descriptive, Diagnostic, Predictive, and Prescriptive tabs remain fully available.</p>
-                  <button
-                    onClick={() => loadAIInsights(false)}
-                    className="mt-1 px-3 py-1.5 bg-[#521903] text-white rounded-xl text-[10.5px] font-bold cursor-pointer"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              )}
-
-              {!aiLoading && !aiError && aiInsights && (
-                <div className="space-y-2.5 flex-1 overflow-y-auto pr-1">
-                  <div className="p-3 rounded-2xl bg-[#FAF6EE] border border-amber-900/10 space-y-1">
-                    <span className="text-[9px] font-black uppercase text-amber-900 flex items-center gap-1">
-                      <Brain className="h-3.5 w-3.5" /> Diagnostic Narrative
-                    </span>
-                    <p className="text-xs text-[#521903]/85 font-medium leading-relaxed">{aiInsights.diagnosticNarrative}</p>
-                    {aiInsights.diagnosticDrivers.length > 0 && (
-                      <ul className="pt-1 space-y-0.5">
-                        {aiInsights.diagnosticDrivers.map((d, i) => (
-                          <li key={i} className="text-[11px] text-[#521903]/70 font-medium">• {d}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-white border border-amber-900/10 space-y-1">
-                    <span className="text-[9px] font-black uppercase text-[#521903]/60 flex items-center gap-1">
-                      <TrendingUp className="h-3.5 w-3.5" /> Predictive Narrative
-                      <span className="text-[8px] font-bold normal-case text-stone-400">(estimate, not a guarantee)</span>
-                    </span>
-                    <p className="text-xs text-[#521903]/85 font-medium leading-relaxed">{aiInsights.predictiveNarrative}</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-bold uppercase text-[#521903]/70">Prescriptive Recommendations</span>
-                    {aiInsights.prescriptiveRecommendations.length === 0 ? (
-                      <p className="text-[11px] text-stone-400 italic">No differentiated recommendations were generated for this scope.</p>
-                    ) : (
-                      aiInsights.prescriptiveRecommendations.map((rec, i) => (
-                        <div key={i} className="p-2.5 rounded-xl bg-white border border-amber-900/10 flex items-start gap-2">
-                          <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase shrink-0 mt-0.5 ${
-                            rec.priority === 'URGENT' ? 'bg-rose-600 text-white' :
-                            rec.priority === 'HIGH' ? 'bg-amber-500 text-white' :
-                            rec.priority === 'RECOMMENDED' ? 'bg-sky-600 text-white' :
-                            'bg-emerald-600 text-white'
-                          }`}>
-                            {rec.priority}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[11px] font-bold text-[#521903]">{rec.targetScope}</p>
-                            <p className="text-[11px] text-[#521903]/80 font-medium leading-tight">{rec.action}</p>
-                            <p className="text-[10px] text-stone-400">Rationale: {rec.rationale}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {aiInsights.dataLimitations.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-stone-50 border border-dashed border-stone-300">
-                      <span className="text-[8.5px] font-bold text-stone-400 uppercase block mb-0.5">Data Limitations</span>
-                      {aiInsights.dataLimitations.map((s, i) => (
-                        <p key={i} className="text-[10px] text-stone-400 leading-tight">{s}</p>
-                      ))}
-                    </div>
-                  )}
-
-                  <p className="text-[9px] text-stone-300 text-center pt-1">
-                    {aiCached ? 'Showing a recent AI analysis' : 'Freshly generated'} for {scopeLabel} · grounded in the real metrics shown in the other tabs
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
 
         </div>
       </div>

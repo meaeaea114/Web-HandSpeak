@@ -1,20 +1,49 @@
 // ==========================================
 // AI ANALYTICS ENGINE (SERVER-ONLY)
 // ==========================================
+// This module must only ever be imported from server-side code
+// (Next.js Route Handlers under app/api/**). It talks to the
+// Anthropic Messages API using a server-side secret
+// (process.env.ANTHROPIC_API_KEY) and must never be imported from
+// a "use client" component, or the API key would be bundled to the browser.
+//
+// ARCHITECTURE
+// ------------
+// ANALYTICS ENGINE (lib/data-service.ts, computeComprehensiveAnalytics)
+//   → calculates real Descriptive / Diagnostic / Predictive / Prescriptive
+//     figures deterministically from Firestore data. This module never
+//     touches or recomputes those numbers.
+//
+// AI INTERPRETATION ENGINE (this file)
+//   → one independent function PER PILLAR. Each function receives ONLY
+//     the data relevant to that pillar's analytical purpose and asks
+//     Claude to interpret it through that pillar's lens only:
+//       Descriptive  → "What is happening?"
+//       Diagnostic   → "Why is it happening?"
+//       Predictive   → "What is likely to happen?" (interprets the real
+//                       rule-based forecast already computed by the
+//                       analytics engine — it never invents a forecast)
+//       Prescriptive → "What should the teacher do?"
+//   There is NO function that summarizes all four pillars together.
+//   Each pillar is cached and refreshed independently.
 
 import { getAdminDb } from './firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
 
-const COHORT_CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
-const STUDENT_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// Each pillar is cached independently, keyed by (pillar, scope, payload hash).
+const CACHE_TTL_MS: Record<AnalyticsPillar, number> = {
+  descriptive: 20 * 60 * 1000,
+  diagnostic: 20 * 60 * 1000,
+  predictive: 25 * 60 * 1000,
+  prescriptive: 25 * 60 * 1000,
+};
 
-// ==========================================
-// SHARED TYPES
-// ==========================================
+export type AnalyticsPillar = 'descriptive' | 'diagnostic' | 'predictive' | 'prescriptive';
+export type AnalyticsScopeType = 'cohort' | 'student';
 
 export interface AIEngineResult<T> {
   ok: boolean;
@@ -22,161 +51,141 @@ export interface AIEngineResult<T> {
   cached: boolean;
   generatedAt: number | null;
   error?: string;
-  limitations?: string[];
-}
-
-export interface CohortAIInsights {
-  diagnosticNarrative: string;
-  diagnosticDrivers: string[];
-  predictiveNarrative: string;
-  predictiveIsEstimate: true;
-  prescriptiveRecommendations: {
-    priority: 'URGENT' | 'HIGH' | 'RECOMMENDED' | 'ENCOURAGE';
-    targetScope: string;
-    action: string;
-    rationale: string;
-  }[];
-  dataLimitations: string[];
-}
-
-export interface StudentAIInsight {
-  studentSummary: string;
-  strengths: string[];
-  weaknesses: string[];
-  diagnosticInsight: string;
-  predictiveInsight: string | null;
-  predictiveConfidenceNote: string | null;
-  recommendedActivities: string[];
-  recommendedInterventions: string[];
-  dataLimitations: string[];
-}
-
-export interface CohortMetricsPayload {
-  scopeLabel: string;
-  totalStudents: number;
-  activeCohort: number;
-  pendingCount: number;
-  avgProgress: number;
-  avgXp: number;
-  avgStars: number;
-  avgStreak: number;
-  totalCompletedLessons: number;
-  alphabetAvgXp: number;
-  numbersAvgXp: number;
-  activeToday: number;
-  activeThisWeek: number;
-  inactiveOver7Days: number;
-  stalledOnboardingCount: number;
-  classPerformance: { className: string; studentCount: number; avgProgress: number; avgXp: number }[];
-  highRiskCount: number;
-  moderateRiskCount: number;
-  fastPacedCount: number;
-  steadyCount: number;
-  gestureAccuracy: {
-    hasData: boolean;
-    totalAttempts: number;
-    overallAccuracy: number | null;
-    weakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
-    signsMastered: number;
-  };
-}
-
-export interface StudentMetricsPayload {
-  firstName: string;
-  gradeLevel?: string;
-  section?: string;
-  studentType?: 'SNED' | 'REGULAR';
-  progress: number;
-  xp: number;
-  stars?: number;
-  streak?: number;
-  completedLessons?: number;
-  alphabetXp?: number;
-  alphabetProgress?: number;
-  numbersXp?: number;
-  numbersProgress?: number;
-  daysSinceLastActive?: number | null;
-  accountAgeDays?: number | null;
-  status: string;
-  gestureAccuracy?: {
-    hasData: boolean;
-    totalAttempts: number;
-    overallAccuracy: number | null;
-    weakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
-  };
 }
 
 // ==========================================
-// FALLBACK BUILDERS (API FAILURE / NO CREDITS)
+// GESTURE DATA SHAPE (shared, real, may be empty)
 // ==========================================
 
-const FALLBACK_COHORT_INSIGHT = (payload: CohortMetricsPayload): CohortAIInsights => ({
-  diagnosticNarrative: `Cohort analytics show an average progress of ${payload.avgProgress}% with ${payload.activeThisWeek} active student(s) this week out of ${payload.totalStudents} total records.`,
-  diagnosticDrivers: [
-    `Active learners this week: ${payload.activeThisWeek}`,
-    `Average streak maintained: ${payload.avgStreak} days`,
-    `Students requiring attention: ${payload.highRiskCount + payload.moderateRiskCount}`
-  ],
-  predictiveNarrative: 'Regular module interaction is projected to sustain incremental progress across all active sections.',
-  predictiveIsEstimate: true,
-  prescriptiveRecommendations: [
-    {
-      priority: payload.highRiskCount > 0 ? 'HIGH' : 'RECOMMENDED',
-      targetScope: payload.scopeLabel,
-      action: 'Schedule focused intervention or review modules for at-risk or inactive students.',
-      rationale: 'Rule-based check identified inactive or lower-progress metrics within this scope.'
-    }
-  ],
-  dataLimitations: ['Anthropic API offline or insufficient credits; system defaulted to deterministic metrics.']
-});
-
-const FALLBACK_STUDENT_INSIGHT = (payload: StudentMetricsPayload): StudentAIInsight => ({
-  studentSummary: `${payload.firstName} is registered with a current overall progress rate of ${payload.progress}%.`,
-  strengths: payload.xp > 0 ? ['Active participation in practice exercises', 'Earning module XP'] : ['Registered account on platform'],
-  weaknesses: payload.progress < 50 ? ['Overall completion rate is below target threshold'] : [],
-  diagnosticInsight: 'Performance trends indicate steady engagement with opportunities for additional practice consistency.',
-  predictiveInsight: 'Continued practice is estimated to increase individual module completion.',
-  predictiveConfidenceNote: 'Estimate generated based on current activity parameters.',
-  recommendedActivities: ['Review primary sign language modules', 'Complete 10 minutes of daily practice'],
-  recommendedInterventions: payload.progress < 30 ? ['Schedule guided review session'] : [],
-  dataLimitations: ['Detailed attempt logs unavailable or restricted.']
-});
+export interface GestureAccuracyInput {
+  hasData: boolean;
+  totalAttempts: number;
+  overallAccuracy: number | null;
+  weakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
+  signsMastered?: number;
+}
 
 // ==========================================
-// HASHING & CACHE UTILITIES
+// PILLAR RESPONSE SCHEMAS
+// (what the dashboard actually renders)
 // ==========================================
 
-function hashPayload(payload: unknown): string {
+export interface DescriptiveInsight {
+  narrative: string; // 2-4 sentences describing CURRENT state only
+  observations: string[]; // 2-5 specific, numbers-grounded current-state observations
+}
+
+export interface DiagnosticInsight {
+  narrative: string; // 2-4 sentences on WHY, hedged appropriately
+  contributingFactors: string[]; // 2-5 evidence-linked factors
+}
+
+export interface PredictiveInsight {
+  hasForecast: boolean;
+  narrative: string | null; // forward-looking forecast narrative, or null if insufficient data
+  forecastPeriod: string | null; // e.g. "next 4 weeks"
+  evidenceUsed: string[]; // which real features were used (e.g. "progress velocity", "streak")
+  limitation: string | null; // set when hasForecast is false, or to note uncertainty
+}
+
+export interface PrescriptiveRecommendation {
+  target: string; // student name, class name, or module name
+  action: string; // the concrete action
+  reason: string; // evidence-based rationale
+  relevantSkill: string | null; // specific sign/module when applicable
+  priority: 'URGENT' | 'HIGH' | 'RECOMMENDED' | 'ENCOURAGE';
+  followUp: string; // what/when to reassess
+}
+
+export interface PrescriptiveInsight {
+  recommendations: PrescriptiveRecommendation[];
+}
+
+export type PillarInsight<P extends AnalyticsPillar> = P extends 'descriptive'
+  ? DescriptiveInsight
+  : P extends 'diagnostic'
+    ? DiagnosticInsight
+    : P extends 'predictive'
+      ? PredictiveInsight
+      : PrescriptiveInsight;
+
+// ==========================================
+// STRUCTURAL VALIDATION PER PILLAR
+// ==========================================
+// Rejects a response that doesn't match the pillar's schema, so a
+// pillar can never silently "drift" into returning another pillar's
+// shape (e.g. Descriptive returning a recommendations array).
+
+export function isDescriptiveShape(x: any): x is DescriptiveInsight {
+  return x && typeof x.narrative === 'string' && Array.isArray(x.observations);
+}
+export function isDiagnosticShape(x: any): x is DiagnosticInsight {
+  return x && typeof x.narrative === 'string' && Array.isArray(x.contributingFactors);
+}
+export function isPredictiveShape(x: any): x is PredictiveInsight {
+  return (
+    x &&
+    typeof x.hasForecast === 'boolean' &&
+    (x.narrative === null || typeof x.narrative === 'string') &&
+    (x.forecastPeriod === null || typeof x.forecastPeriod === 'string') &&
+    Array.isArray(x.evidenceUsed) &&
+    (x.limitation === null || typeof x.limitation === 'string')
+  );
+}
+export function isPrescriptiveShape(x: any): x is PrescriptiveInsight {
+  return (
+    x &&
+    Array.isArray(x.recommendations) &&
+    x.recommendations.every(
+      (r: any) =>
+        typeof r.target === 'string' &&
+        typeof r.action === 'string' &&
+        typeof r.reason === 'string' &&
+        typeof r.followUp === 'string' &&
+        ['URGENT', 'HIGH', 'RECOMMENDED', 'ENCOURAGE'].includes(r.priority)
+    )
+  );
+}
+
+// ==========================================
+// HASHING / CACHE
+// ==========================================
+
+export function hashPayload(payload: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32);
 }
 
-async function readCache<T>(collection: string, key: string, ttlMs: number): Promise<{ data: T; generatedAt: number } | null> {
+function getAdminDbInstance() {
+  return getAdminDb();
+}
+
+async function readCache<T>(cacheKey: string, ttlMs: number): Promise<{ data: T; generatedAt: number } | null> {
   try {
-    const db = getAdminDb();
-    const snap = await db.collection(collection).doc(key).get();
+    const db = getAdminDbInstance();
+    const snap = await db.collection('ai_insights_v2').doc(cacheKey).get();
     if (!snap.exists) return null;
     const doc = snap.data();
-    if (!doc || !doc.generatedAt || !doc.insights) return null;
+    if (!doc || !doc.generatedAt || !doc.insight) return null;
     const generatedAtMs = typeof doc.generatedAt === 'number' ? doc.generatedAt : doc.generatedAt.toMillis?.() ?? 0;
     if (Date.now() - generatedAtMs > ttlMs) return null;
-    return { data: doc.insights as T, generatedAt: generatedAtMs };
+    return { data: doc.insight as T, generatedAt: generatedAtMs };
   } catch (err) {
-    console.error(`AI cache read failed (${collection}/${key}):`, err);
+    console.error(`AI cache read failed (${cacheKey}):`, err);
     return null;
   }
 }
 
-async function writeCache(collection: string, key: string, insights: unknown): Promise<number> {
+async function writeCache(cacheKey: string, insight: unknown): Promise<number> {
   const generatedAt = Date.now();
   try {
-    const db = getAdminDb();
-    await db.collection(collection).doc(key).set({
-      insights,
+    const db = getAdminDbInstance();
+    await db.collection('ai_insights_v2').doc(cacheKey).set({
+      insight,
       generatedAt,
       updatedAt: FieldValue.serverTimestamp(),
     });
   } catch (err) {
-    console.error(`AI cache write failed (${collection}/${key}):`, err);
+    console.error(`AI cache write failed (${cacheKey}):`, err);
   }
   return generatedAt;
 }
@@ -185,10 +194,10 @@ async function writeCache(collection: string, key: string, insights: unknown): P
 // ANTHROPIC API CALL
 // ==========================================
 
-async function callClaude(system: string, userPrompt: string, maxTokens = 1400): Promise<string | null> {
+async function callClaude(system: string, userPrompt: string, maxTokens = 900): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error('[AI Engine] ANTHROPIC_API_KEY is not configured on the server.');
+    console.error('ANTHROPIC_API_KEY is not configured on the server.');
     return null;
   }
 
@@ -211,17 +220,15 @@ async function callClaude(system: string, userPrompt: string, maxTokens = 1400):
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      console.error(`[AI Engine] Anthropic API error status (${response.status}):`, errText);
+      console.error(`Anthropic API error (${response.status}):`, errText);
       return null;
     }
 
     const data = await response.json();
-    const textBlock = Array.isArray(data?.content)
-      ? data.content.find((b: any) => b.type === 'text')
-      : null;
+    const textBlock = Array.isArray(data?.content) ? data.content.find((b: any) => b.type === 'text') : null;
     return textBlock?.text ?? null;
   } catch (err) {
-    console.error('[AI Engine] Anthropic API request network error:', err);
+    console.error('Anthropic API request failed:', err);
     return null;
   }
 }
@@ -242,135 +249,289 @@ function extractJson<T>(raw: string | null): T | null {
 }
 
 // ==========================================
-// PROMPTS
+// SHARED SYSTEM-PROMPT PREAMBLE
 // ==========================================
 
-const COHORT_SYSTEM_PROMPT = `You are an instructional-analytics assistant embedded in a Filipino Sign Language (FSL) learning platform called HandSpeak, used by K-6 teachers.
+const BASE_RULES = `You are an instructional-analytics assistant embedded in a Filipino Sign Language (FSL) learning platform called HandSpeak, used by K-6 teachers.
 
-You will be given ONLY aggregated, already-computed statistics about a class or cohort of students. These numbers are ground truth — do not alter, recompute, round differently, or contradict them, and never invent a number that was not given to you.
+You will be given ONLY the data relevant to ONE specific analytics pillar. This data is ground truth, already calculated by a separate deterministic analytics engine — do not alter it, recompute it, or contradict it, and NEVER invent a number, statistic, student behavior, or forecast value that was not given to you.
 
-Your job is to:
-1. Interpret WHY the pattern in the data is likely happening (diagnostic reasoning), grounded strictly in the provided numbers.
-2. Offer a predictive narrative about what is likely to happen if current trends continue.
-3. Recommend concrete, differentiated teacher actions (prescriptive).
-4. List any analytics you cannot responsibly produce because the data provided is insufficient.
+You must stay strictly within the analytical purpose of the pillar you are asked about. Do not blur it with another pillar's purpose (described below). Respond with ONLY a single JSON object — no markdown fences, no prose outside the JSON.`;
 
-Respond with ONLY a single JSON object matching exactly this shape:
-{
-  "diagnosticNarrative": string,
-  "diagnosticDrivers": string[],
-  "predictiveNarrative": string,
-  "prescriptiveRecommendations": [
-    { "priority": "URGENT"|"HIGH"|"RECOMMENDED"|"ENCOURAGE", "targetScope": string, "action": string, "rationale": string }
-  ],
-  "dataLimitations": string[]
-}`;
-
-const STUDENT_SYSTEM_PROMPT = `You are an instructional-analytics assistant embedded in a Filipino Sign Language (FSL) learning platform called HandSpeak.
-
-You will be given ONLY aggregated, already-computed statistics about ONE student.
-
-Your job is to:
-1. Identify real strengths and weaknesses grounded strictly in the provided numbers.
-2. Give a short diagnostic insight explaining a likely reason for the pattern.
-3. Give a predictive insight if sufficient data exists; otherwise set "predictiveInsight" to null and explain in "predictiveConfidenceNote".
-4. Recommend concrete next learning activities and interventions.
-5. List data limitations.
-
-Respond with ONLY a single JSON object matching exactly this shape:
-{
-  "studentSummary": string,
-  "strengths": string[],
-  "weaknesses": string[],
-  "diagnosticInsight": string,
-  "predictiveInsight": string | null,
-  "predictiveConfidenceNote": string | null,
-  "recommendedActivities": string[],
-  "recommendedInterventions": string[],
-  "dataLimitations": string[]
-}`;
+const PILLAR_BOUNDARY_REMINDER = `Pillar boundaries (do not cross these):
+- Descriptive answers "What is happening?" using only current, already-measured figures. No predictions, no recommendations.
+- Diagnostic answers "Why might it be happening?" using patterns/relationships in the given evidence, hedged with words like "may indicate", "is associated with", "the data suggests" when causality isn't certain. It does not restate raw current numbers as if that were new insight, and it does not forecast or prescribe.
+- Predictive answers "What is likely to happen?" — a forward-looking forecast interpreting the real forecast data already computed for you. It does not just restate current status, and does not recommend actions.
+- Prescriptive answers "What should the teacher do?" — concrete, targeted actions grounded in the evidence given. It does not merely restate the diagnosis or forecast without an action.`;
 
 // ==========================================
-// PUBLIC EXPORTS
+// COHORT-LEVEL PAYLOADS
 // ==========================================
 
-export async function getCohortAIInsights(
-  payload: CohortMetricsPayload,
-  opts: { forceRefresh?: boolean } = {}
-): Promise<AIEngineResult<CohortAIInsights>> {
-  const key = hashPayload(payload);
-
-  if (!opts.forceRefresh) {
-    const cached = await readCache<CohortAIInsights>('ai_insights_cohort', key, COHORT_CACHE_TTL_MS);
-    if (cached) {
-      return { ok: true, data: cached.data, cached: true, generatedAt: cached.generatedAt };
-    }
-  }
-
-  if (payload.totalStudents === 0) {
-    return {
-      ok: true,
-      cached: false,
-      generatedAt: Date.now(),
-      data: {
-        diagnosticNarrative: 'No students are currently in this scope, so no diagnostic pattern can be identified.',
-        diagnosticDrivers: [],
-        predictiveNarrative: 'A forecast cannot be produced without any enrolled students in scope.',
-        predictiveIsEstimate: true,
-        prescriptiveRecommendations: [],
-        dataLimitations: ['No student records are available in the current filter/scope.'],
-      },
-    };
-  }
-
-  const userPrompt = `Here is the aggregated cohort data for "${payload.scopeLabel}":\n\n${JSON.stringify(payload, null, 2)}`;
-  const raw = await callClaude(COHORT_SYSTEM_PROMPT, userPrompt);
-  const parsed = extractJson<Omit<CohortAIInsights, 'predictiveIsEstimate'>>(raw);
-
-  if (!parsed) {
-    console.warn('[AI Engine] Anthropic API failed or credit exhausted. Serving deterministic fallback.');
-    return {
-      ok: true,
-      data: FALLBACK_COHORT_INSIGHT(payload),
-      cached: false,
-      generatedAt: Date.now(),
-    };
-  }
-
-  const insights: CohortAIInsights = { ...parsed, predictiveIsEstimate: true };
-  const generatedAt = await writeCache('ai_insights_cohort', key, insights);
-
-  return { ok: true, data: insights, cached: false, generatedAt };
+export interface CohortDescriptivePayload {
+  scopeLabel: string;
+  totalStudents: number;
+  activeCohort: number;
+  pendingCount: number;
+  avgProgress: number;
+  avgXp: number;
+  avgStars: number;
+  avgStreak: number;
+  totalCompletedLessons: number;
+  alphabetAvgXp: number;
+  numbersAvgXp: number;
+  activeToday: number;
+  activeThisWeek: number;
+  inactiveOver7Days: number;
+  classPerformance: { className: string; studentCount: number; avgProgress: number; avgXp: number }[];
+  gestureAccuracy: GestureAccuracyInput;
 }
 
-export async function getStudentAIInsight(
-  studentId: string,
-  payload: StudentMetricsPayload,
+export interface CohortDiagnosticPayload {
+  scopeLabel: string;
+  totalStudents: number;
+  findings: { title: string; category: string; severity: string; description: string; metric: string; affectedCount: number }[];
+  moduleComparison: { alphabetAvgXp: number; numbersAvgXp: number; lowerModule: string; gapDifference: number };
+  lowestClass: { className: string; avgProgress: number; studentCount: number } | null;
+  stalledOnboardingCount: number;
+  streakCorrelation: string;
+  gestureWeakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
+  gestureHasData: boolean;
+}
+
+export interface CohortPredictivePayload {
+  scopeLabel: string;
+  totalStudents: number;
+  riskForecast: { student: string; riskLevel: string; predictedOutcome: string; reason: string }[];
+  growthForecast: { student: string; growthVelocity: string; projectedMastery: string; reason: string }[];
+  projectedCohortAvgNextMonth: number;
+  deterministicSummary: string;
+}
+
+export interface CohortPrescriptivePayload {
+  scopeLabel: string;
+  totalStudents: number;
+  directives: { priority: string; targetScope: string; targetType: string; actionDirective: string; rationale: string }[];
+  riskForecastCount: number;
+  gestureWeakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
+}
+
+// ==========================================
+// STUDENT-LEVEL PAYLOADS
+// ==========================================
+
+export interface StudentDescriptivePayload {
+  firstName: string;
+  gradeLevel: string;
+  section: string;
+  progress: number;
+  xp: number;
+  stars: number;
+  streak: number;
+  completedLessons: number;
+  alphabetXp: number;
+  alphabetProgress: number;
+  numbersXp: number;
+  numbersProgress: number;
+  daysSinceLastActive: number | null;
+  status: string;
+  gestureAccuracy: GestureAccuracyInput;
+}
+
+export interface StudentDiagnosticPayload {
+  firstName: string;
+  progress: number;
+  alphabetXp: number;
+  numbersXp: number;
+  moduleGapDescription: string; // real deterministic comparison for this one student
+  isStalledOnboarding: boolean;
+  streak: number;
+  daysSinceLastActive: number | null;
+  gestureWeakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
+  gestureHasData: boolean;
+}
+
+export interface StudentPredictivePayload {
+  firstName: string;
+  riskItem: { riskLevel: string; predictedOutcome: string; reason: string } | null;
+  growthItem: { growthVelocity: string; projectedMastery: string; reason: string } | null;
+  accountAgeDays: number | null;
+  progress: number;
+  streak: number;
+}
+
+export interface StudentPrescriptivePayload {
+  firstName: string;
+  directive: { priority: string; actionDirective: string; rationale: string } | null;
+  progress: number;
+  gestureWeakSigns: { sign: string; module: string; attempts: number; accuracy: number }[];
+  weakerModule: string | null; // "alphabet" | "numbers" | null
+}
+
+// ==========================================
+// PILLAR SYSTEM PROMPTS
+// ==========================================
+
+function descriptiveSystemPrompt(scope: AnalyticsScopeType): string {
+  const subject = scope === 'cohort' ? 'a class/cohort of students' : 'one individual student';
+  return `${BASE_RULES}
+
+${PILLAR_BOUNDARY_REMINDER}
+
+You are generating the DESCRIPTIVE analytics interpretation for ${subject}. Answer only "What is happening right now?" using the given current metrics. Do NOT predict future outcomes and do NOT recommend interventions — those belong to other pillars.
+
+Respond with ONLY this JSON shape:
+{
+  "narrative": string (2-4 sentences, specific, citing the actual numbers given, present tense),
+  "observations": string[] (2-5 short, specific, numbers-grounded current-state observations; empty array if truly nothing notable)
+}`;
+}
+
+function diagnosticSystemPrompt(scope: AnalyticsScopeType): string {
+  const subject = scope === 'cohort' ? 'a class/cohort of students' : 'one individual student';
+  return `${BASE_RULES}
+
+${PILLAR_BOUNDARY_REMINDER}
+
+You are generating the DIAGNOSTIC analytics interpretation for ${subject}. Answer only "Why might this be happening?" by connecting patterns and relationships in the given evidence (e.g. module gaps, weak signs, inactivity, low practice frequency). Use hedged language ("may indicate", "is associated with", "the data suggests") rather than asserting definite causation unless the evidence is unambiguous. Do NOT simply restate current-state numbers as if that were a diagnosis — explain a plausible reason. Do NOT forecast the future and do NOT recommend actions — those belong to other pillars.
+
+Respond with ONLY this JSON shape:
+{
+  "narrative": string (2-4 sentences explaining likely reasons, hedged appropriately),
+  "contributingFactors": string[] (2-5 short items, each tied to a specific piece of given evidence; empty array if the evidence given doesn't support any diagnosis)
+}`;
+}
+
+function predictiveSystemPrompt(scope: AnalyticsScopeType): string {
+  const subject = scope === 'cohort' ? 'a class/cohort of students' : 'one individual student';
+  return `${BASE_RULES}
+
+${PILLAR_BOUNDARY_REMINDER}
+
+You are generating the PREDICTIVE analytics interpretation for ${subject}. You are given the OUTPUT of a real deterministic forecasting rule (risk/growth classification already computed from actual trajectory data) — your job is to turn that into a clear forward-looking narrative about what is LIKELY TO HAPPEN, not to invent your own numeric forecast. Do NOT just restate current status — describe the likely future trajectory. Do NOT recommend actions — that belongs to the Prescriptive pillar.
+
+If no risk/growth item was computed for this scope (both are null/empty), you MUST set "hasForecast": false, "narrative": null, "forecastPeriod": null, and explain the reason in "limitation" (e.g. insufficient historical/activity data). Never invent a forecast when none was computed.
+
+Respond with ONLY this JSON shape:
+{
+  "hasForecast": boolean,
+  "narrative": string | null (2-3 sentences, clearly forward-looking, hedged as an estimate, e.g. "is likely to...", "if the current trend continues..."),
+  "forecastPeriod": string | null (e.g. "next 4 weeks", "next grading period"),
+  "evidenceUsed": string[] (which given features drove this, e.g. "progress velocity", "streak", "inactivity duration"),
+  "limitation": string | null (fill this whenever hasForecast is false, or to note any uncertainty)
+}`;
+}
+
+function prescriptiveSystemPrompt(scope: AnalyticsScopeType): string {
+  const subject = scope === 'cohort' ? 'a class/cohort of students' : 'one individual student';
+  return `${BASE_RULES}
+
+${PILLAR_BOUNDARY_REMINDER}
+
+You are generating the PRESCRIPTIVE analytics interpretation for ${subject}. Answer only "What should the teacher DO?" Turn the given evidence (diagnosis-relevant findings, risk/directive data, weak signs) into concrete, specific, actionable teacher recommendations. Do NOT give generic advice like "encourage the student to practice more" unless you tie it to a specific reason and specific activity/skill from the given data. Each recommendation must be actionable and tied to real evidence given to you — never invent a reason that wasn't in the data.
+
+Respond with ONLY this JSON shape:
+{
+  "recommendations": [
+    {
+      "target": string (student name, class name, or module name from the given data),
+      "action": string (a specific, concrete action),
+      "reason": string (evidence-based rationale using only the given data),
+      "relevantSkill": string | null (a specific sign or module when the data supports it),
+      "priority": "URGENT" | "HIGH" | "RECOMMENDED" | "ENCOURAGE",
+      "followUp": string (what/when the teacher should reassess)
+    }
+  ] (0-5 items; empty array only if truly no evidence supports any recommendation — this should be rare)
+}`;
+}
+
+const PILLAR_PROMPTS: Record<AnalyticsPillar, (scope: AnalyticsScopeType) => string> = {
+  descriptive: descriptiveSystemPrompt,
+  diagnostic: diagnosticSystemPrompt,
+  predictive: predictiveSystemPrompt,
+  prescriptive: prescriptiveSystemPrompt,
+};
+
+const PILLAR_VALIDATORS: Record<AnalyticsPillar, (x: any) => boolean> = {
+  descriptive: isDescriptiveShape,
+  diagnostic: isDiagnosticShape,
+  predictive: isPredictiveShape,
+  prescriptive: isPrescriptiveShape,
+};
+
+// ==========================================
+// GENERIC PILLAR RUNNER
+// ==========================================
+
+export function buildCacheKey(pillar: AnalyticsPillar, scope: AnalyticsScopeType, scopeIdentifier: string, payload: unknown): string {
+  const payloadHash = hashPayload(payload);
+  return `${scope}_${pillar}_${scopeIdentifier.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 80)}_${payloadHash}`;
+}
+
+async function runPillarInsight<P extends AnalyticsPillar>(
+  pillar: P,
+  scope: AnalyticsScopeType,
+  scopeIdentifier: string, // e.g. cohort scopeLabel or student uid, used to namespace the cache
+  payload: unknown,
   opts: { forceRefresh?: boolean } = {}
-): Promise<AIEngineResult<StudentAIInsight>> {
-  const key = `${studentId}_${hashPayload(payload)}`;
+): Promise<AIEngineResult<PillarInsight<P>>> {
+  const cacheKey = buildCacheKey(pillar, scope, scopeIdentifier, payload);
 
   if (!opts.forceRefresh) {
-    const cached = await readCache<StudentAIInsight>('ai_insights_student', key, STUDENT_CACHE_TTL_MS);
+    const cached = await readCache<PillarInsight<P>>(cacheKey, CACHE_TTL_MS[pillar]);
     if (cached) {
       return { ok: true, data: cached.data, cached: true, generatedAt: cached.generatedAt };
     }
   }
 
-  const userPrompt = `Here is the aggregated performance data for one student:\n\n${JSON.stringify(payload, null, 2)}`;
-  const raw = await callClaude(STUDENT_SYSTEM_PROMPT, userPrompt, 900);
-  const parsed = extractJson<StudentAIInsight>(raw);
+  const system = PILLAR_PROMPTS[pillar](scope);
+  const userPrompt = `Here is the ${pillar} data for this ${scope === 'cohort' ? 'cohort/class' : 'student'}:\n\n${JSON.stringify(payload, null, 2)}`;
 
-  if (!parsed) {
-    console.warn(`[AI Engine] Anthropic API failed for student ${studentId}. Serving fallback insights.`);
+  const raw = await callClaude(system, userPrompt, pillar === 'prescriptive' ? 1100 : 700);
+  const parsed = extractJson<any>(raw);
+
+  if (!parsed || !PILLAR_VALIDATORS[pillar](parsed)) {
     return {
-      ok: true,
-      data: FALLBACK_STUDENT_INSIGHT(payload),
+      ok: false,
+      data: null,
       cached: false,
-      generatedAt: Date.now(),
+      generatedAt: null,
+      error: process.env.ANTHROPIC_API_KEY
+        ? `The AI ${pillar} interpretation service returned an unreadable or malformed response.`
+        : `The AI analytics service is not configured on the server (missing ANTHROPIC_API_KEY).`,
     };
   }
 
-  const generatedAt = await writeCache('ai_insights_student', key, parsed);
-  return { ok: true, data: parsed, cached: false, generatedAt };
+  const generatedAt = await writeCache(cacheKey, parsed);
+  return { ok: true, data: parsed as PillarInsight<P>, cached: false, generatedAt };
+}
+
+// ==========================================
+// PUBLIC API — ONE FUNCTION PER PILLAR, PER SCOPE
+// ==========================================
+
+export function generateCohortDescriptiveInsight(payload: CohortDescriptivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('descriptive', 'cohort', payload.scopeLabel, payload, opts);
+}
+export function generateCohortDiagnosticInsight(payload: CohortDiagnosticPayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('diagnostic', 'cohort', payload.scopeLabel, payload, opts);
+}
+export function generateCohortPredictiveInsight(payload: CohortPredictivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('predictive', 'cohort', payload.scopeLabel, payload, opts);
+}
+export function generateCohortPrescriptiveInsight(payload: CohortPrescriptivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('prescriptive', 'cohort', payload.scopeLabel, payload, opts);
+}
+
+export function generateStudentDescriptiveInsight(studentId: string, payload: StudentDescriptivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('descriptive', 'student', studentId, payload, opts);
+}
+export function generateStudentDiagnosticInsight(studentId: string, payload: StudentDiagnosticPayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('diagnostic', 'student', studentId, payload, opts);
+}
+export function generateStudentPredictiveInsight(studentId: string, payload: StudentPredictivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('predictive', 'student', studentId, payload, opts);
+}
+export function generateStudentPrescriptiveInsight(studentId: string, payload: StudentPrescriptivePayload, opts?: { forceRefresh?: boolean }) {
+  return runPillarInsight('prescriptive', 'student', studentId, payload, opts);
 }
