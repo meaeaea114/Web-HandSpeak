@@ -110,7 +110,7 @@ function ResetPasswordForm() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[#f5eccd] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-fixed relative overflow-hidden font-sans">
+    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[#f5eccd] bg-[url('/bg-parchment.jpg')] bg-repeat bg-fixed relative overflow-hidden font-sans">
       {/* Background Ambience Tint */}
       <div className="absolute inset-0 bg-[#e8d89e]/30 backdrop-blur-[1px] pointer-events-none" />
 

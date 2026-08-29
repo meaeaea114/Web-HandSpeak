@@ -317,7 +317,7 @@ export default function RegisterPage() {
 
     return (
       <div className="relative min-h-screen flex items-center justify-center p-4 overflow-x-hidden font-sans antialiased">
-        <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
+        <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-repeat" />
 
         <div className="w-full max-w-lg bg-white shadow-2xl rounded-3xl p-8 text-center border border-slate-100 animate-fadeIn">
           <div className="w-14 h-14 bg-amber-500 text-slate-950 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
@@ -340,7 +340,7 @@ export default function RegisterPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
-      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
+      <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-repeat" />
 
       {/* MASTER CONTAINER FRAME - fluid height on mobile/tablet where panes stack, fixed height restored at md+ to match the original desktop design */}
       <div className="w-full max-w-5xl h-auto md:h-[620px] bg-white border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.14)] rounded-3xl overflow-hidden grid grid-cols-1 md:grid-cols-12">

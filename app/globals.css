@@ -178,13 +178,21 @@ html, body {
 
 /* =========================================
    BACKGROUND THEME OVERRIDES
+
+   FIX: the HandSpeak background is a texture/pattern, not a hero
+   photo — it must tile via background-repeat instead of being
+   scaled up with `background-size: cover`. Forcing `cover` on a
+   moderate-resolution texture stretches/blurs it to fill huge
+   viewports. `auto` keeps the texture at its native resolution and
+   `repeat` tiles it seamlessly in both directions, so it never
+   distorts, no matter the screen size or page height.
    ========================================= */
 body {
   transition: background-image 0.4s ease-in-out, background-color 0.4s ease-in-out;
-  background-size: cover !important;
-  background-position: center !important;
+  background-size: auto !important;
+  background-position: top left !important;
   background-attachment: fixed !important;
-  background-repeat: no-repeat !important;
+  background-repeat: repeat !important;
 }
 
 /* iOS Safari (and some Android WebViews) render `background-attachment:
@@ -197,16 +205,25 @@ body {
   }
 }
 
-/* Light Mode: Provided light texture */
+/* Light Mode: Provided light texture.
+   Native resolution (1152x2048) is much larger than the parchment
+   texture, so at "auto" size it barely repeats on a normal screen —
+   it just reads as one big slab. Scale it down to a sensible tile
+   size, specifying only the width so the height is derived
+   automatically and the image's exact aspect ratio (and therefore
+   its proportions) is preserved. */
 html.theme-light body {
   background-image: url('/image_9aa0c4.jpg') !important;
   background-color: transparent !important;
+  background-size: 480px auto !important;
 }
 
-/* Dark Mode: Provided dark concrete */
+/* Dark Mode: Provided dark concrete. Same reasoning as light mode
+   above — scaled to a matching tile size without distorting it. */
 html.theme-dark body {
   background-image: url('/image_9aa043.jpg') !important;
   background-color: transparent !important;
+  background-size: 480px auto !important;
 }
 
 /* System Default: Original HandSpeak parchment */
@@ -222,4 +239,57 @@ main,
 .h-screen {
   background-color: transparent !important;
   background-image: none !important;
+}
+
+/* =========================================
+   HANDSPEAK LANDING / LOADING SCREEN
+   ========================================= */
+
+/* Card container: gentle rise + scale into place */
+@keyframes handspeak-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Soft glow behind the logo fading into view */
+@keyframes handspeak-glow-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 0.55; transform: scale(1); }
+}
+
+/* Idle breathing loop for that same glow once it has appeared */
+@keyframes handspeak-glow-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(1.08); }
+}
+
+/* Logo mark: pops in with a slight overshoot + rotation settle */
+@keyframes handspeak-logo-in {
+  from { opacity: 0; transform: scale(0.5) rotate(-10deg); }
+  to { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+/* Individual wordmark letters, staggered via animation-delay per letter */
+@keyframes handspeak-letter-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Generic fade + rise, reused for tagline / progress bar / status text */
+@keyframes handspeak-fade-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes handspeak-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handspeak-landing * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

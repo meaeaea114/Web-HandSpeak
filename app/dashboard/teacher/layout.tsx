@@ -67,7 +67,7 @@ export default function TeacherDashboardLayout({
 
   return (
     <div
-      className="flex h-screen w-screen overflow-hidden p-3 sm:p-6 gap-3 sm:gap-6 font-sans antialiased bg-[#F5E6C4] bg-cover bg-center bg-no-repeat"
+      className="flex h-screen w-screen overflow-hidden p-3 sm:p-6 gap-3 sm:gap-6 font-sans antialiased bg-[#F5E6C4] bg-repeat"
       style={{ backgroundImage: "url('/bg-parchment.jpg')" }}
     >
       {/* Mobile backdrop overlay - only shown when the drawer is open on small screens */}

@@ -52,7 +52,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (!isClient || isLoading) {
     return (
       <div 
-        className="h-screen w-screen flex items-center justify-center bg-[#F5E6C4] bg-cover bg-center bg-no-repeat" 
+        className="h-screen w-screen flex items-center justify-center bg-[#F5E6C4] bg-repeat" 
         style={{ backgroundImage: "url('/bg-parchment.jpg')" }}
       >
         <div className="flex flex-col items-center gap-3 bg-white/40 backdrop-blur-md p-8 rounded-[24px] border border-white/40 shadow-xl">
