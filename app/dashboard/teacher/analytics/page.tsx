@@ -273,7 +273,7 @@ export default function TeacherAnalyticsDashboardPage() {
       
       {/* SECTION 1: TOP GLOBAL SEARCH & FILTER HEADER */}
       <div className="bg-white/85 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white/70 shadow-[3px_3px_12px_rgba(82,25,3,0.03)] flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
-        <div className="relative w-80">
+        <div className="relative w-full sm:w-80">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#521903]/40" />
           <input
             type="text"
@@ -284,7 +284,7 @@ export default function TeacherAnalyticsDashboardPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isScopeRestricted && (
             <div className="flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200" title="Analytics limited to your assigned classes">
               <Lock className="h-3 w-3 text-amber-700" />
@@ -581,7 +581,7 @@ export default function TeacherAnalyticsDashboardPage() {
               </div>
 
               {/* Class Performance Roster */}
-              <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
+              <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
                 <span className="text-[10px] font-bold uppercase text-[#521903]/70">Class Performance Benchmark</span>
                 <div className="divide-y divide-amber-900/10 bg-white p-3 rounded-2xl border border-amber-900/10">
                   {analytics.descriptive.classPerformance.map((c) => (

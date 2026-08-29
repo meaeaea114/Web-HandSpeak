@@ -515,8 +515,8 @@ export default function TeacherLeaderboardPage() {
                 <span>Showing {rankedStudents.length} Students Ranked</span>
               </div>
 
-              <div className="border border-stone-100 dark:border-[#382F2A] rounded-2xl bg-white/80 dark:bg-[#151311] shadow-xs overflow-hidden">
-                <div className="w-full">
+              <div className="border border-stone-100 dark:border-[#382F2A] rounded-2xl bg-white/80 dark:bg-[#151311] shadow-xs overflow-x-auto overflow-y-hidden">
+                <div className="w-full min-w-[640px]">
                   
                   {/* Table Header Row */}
                   <div className="border-b border-stone-200/80 dark:border-[#382F2A] py-3.5 px-4 text-[10px] text-slate-400 uppercase tracking-widest grid grid-cols-[70px_1.5fr_1fr_120px_140px] items-center bg-stone-50/60 dark:bg-[#1A1614]/60">

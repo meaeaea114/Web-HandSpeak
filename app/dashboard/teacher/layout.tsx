@@ -223,7 +223,7 @@ export default function TeacherDashboardLayout({
         
         {/* MAIN VIEWPORT WINDOW CANVAS */}
         <main className="flex-1 overflow-hidden rounded-[24px] bg-white/40 backdrop-blur-md p-1 border border-white/30 relative">
-          <div className="w-full h-full overflow-y-auto pl-2 pr-3.5 py-3">
+          <div className="w-full h-full overflow-y-auto overflow-x-hidden pl-2 pr-3.5 py-3">
             {children}
           </div>
         </main>

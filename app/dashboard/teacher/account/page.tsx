@@ -755,7 +755,7 @@ export default function TeacherAccountManagementPage() {
     <div className="w-full h-auto md:h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-visible md:overflow-hidden">
       
       {/* Top Header Row with Title on Left and Action Buttons on Right */}
-      <div className="flex items-center justify-between shrink-0 px-1 pt-1">
+      <div className="flex items-center justify-between flex-wrap gap-3 shrink-0 px-1 pt-1">
         <h2 className="text-sm font-black uppercase tracking-wider text-[#521903] dark:text-[#F0AB31] font-serif">
           STUDENT ACCOUNT MANAGEMENT
         </h2>
@@ -797,10 +797,10 @@ export default function TeacherAccountManagementPage() {
         <div className="space-y-4 flex-1 flex flex-col min-h-[600px] md:min-h-0">
           
           {/* Search & Filter Controls Bar */}
-          <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-xl p-3.5 rounded-full border border-white/70 dark:border-[#382F2A] shadow-xs shrink-0 flex items-center justify-between gap-4">
+          <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-xl p-3.5 rounded-[28px] sm:rounded-full border border-white/70 dark:border-[#382F2A] shadow-xs shrink-0 flex flex-wrap items-center gap-3">
             
             {/* Search Input */}
-            <div className="relative w-80 shrink-0">
+            <div className="relative w-full sm:w-72 shrink-0">
               <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 pointer-events-none" />
               <input
                 type="text"
@@ -812,12 +812,12 @@ export default function TeacherAccountManagementPage() {
             </div>
 
             {/* Status Filter Pills, Classification & Grade Dropdown */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1 bg-stone-100 dark:bg-[#0D0B0A] p-1 rounded-full border border-stone-200 dark:border-[#382F2A] text-xs font-bold">
+            <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
+              <div className="flex items-center gap-1 bg-stone-100 dark:bg-[#0D0B0A] p-1 rounded-full border border-stone-200 dark:border-[#382F2A] text-xs font-bold overflow-x-auto max-w-full">
                 <button
                   type="button"
                   onClick={() => setStatusFilter('all')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'all'
                       ? 'bg-[#521903] text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -828,7 +828,7 @@ export default function TeacherAccountManagementPage() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('pending')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'pending'
                       ? 'bg-amber-500 text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -839,7 +839,7 @@ export default function TeacherAccountManagementPage() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('approved')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'approved'
                       ? 'bg-emerald-600 text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -850,7 +850,7 @@ export default function TeacherAccountManagementPage() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('rejected')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'rejected'
                       ? 'bg-rose-600 text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -861,7 +861,7 @@ export default function TeacherAccountManagementPage() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('deactivated')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'deactivated'
                       ? 'bg-zinc-700 text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -872,7 +872,7 @@ export default function TeacherAccountManagementPage() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('archived')}
-                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] ${
+                  className={`px-3 py-1 rounded-full transition-all cursor-pointer text-[11px] shrink-0 whitespace-nowrap ${
                     statusFilter === 'archived'
                       ? 'bg-stone-800 text-white shadow-xs'
                       : 'text-stone-600 dark:text-stone-400 hover:text-stone-900'
@@ -929,18 +929,18 @@ export default function TeacherAccountManagementPage() {
             </div>
           ) : (
             <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/70 dark:border-[#382F2A] shadow-xl overflow-hidden flex-1 flex flex-col min-h-[420px] md:min-h-0">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
-                <table className="w-full text-left border-collapse text-xs table-fixed">
+              <div className="flex-1 overflow-y-auto overflow-x-auto pr-2">
+                <table className="w-full min-w-[760px] text-left border-collapse text-xs table-fixed">
                   
                   {/* Sticky Header Layer with generous action gutter */}
                   <thead className="sticky top-0 z-20 bg-white/95 dark:bg-[#1A1614]/95 backdrop-blur-md">
                     <tr className="border-b border-stone-200/80 dark:border-[#382F2A] text-[10px] text-slate-400 uppercase tracking-widest">
-                      <th className="py-4 px-6 w-[25%] bg-white/95 dark:bg-[#1A1614]/95">USER PROFILE</th>
-                      <th className="py-4 px-4 w-[18%] bg-white/95 dark:bg-[#1A1614]/95">ACADEMIC GROUP</th>
-                      <th className="py-4 px-4 w-[15%] bg-white/95 dark:bg-[#1A1614]/95">IDENTIFIER</th>
-                      <th className="py-4 px-4 w-[10%] text-center bg-white/95 dark:bg-[#1A1614]/95">ROLE</th>
-                      <th className="py-4 px-4 w-[12%] text-center bg-white/95 dark:bg-[#1A1614]/95">STATUS</th>
-                      <th className="py-4 pr-6 w-[20%] text-right bg-white/95 dark:bg-[#1A1614]/95">WORKFLOW ACTION</th>
+                      <th className="py-4 px-6 w-[25%] bg-white/95 dark:bg-[#1A1614]/95 truncate">USER PROFILE</th>
+                      <th className="py-4 px-4 w-[18%] bg-white/95 dark:bg-[#1A1614]/95 truncate">ACADEMIC GROUP</th>
+                      <th className="py-4 px-4 w-[15%] bg-white/95 dark:bg-[#1A1614]/95 truncate">IDENTIFIER</th>
+                      <th className="py-4 px-4 w-[10%] text-center bg-white/95 dark:bg-[#1A1614]/95 truncate">ROLE</th>
+                      <th className="py-4 px-4 w-[12%] text-center bg-white/95 dark:bg-[#1A1614]/95 truncate">STATUS</th>
+                      <th className="py-4 pr-6 w-[20%] text-right bg-white/95 dark:bg-[#1A1614]/95 truncate">WORKFLOW ACTION</th>
                     </tr>
                   </thead>
 
@@ -1545,7 +1545,7 @@ export default function TeacherAccountManagementPage() {
             </div>
 
             {/* Modal Body Container */}
-            <div className="p-6 space-y-3.5 text-xs max-h-[380px] overflow-y-auto">
+            <div className="p-6 space-y-3.5 text-xs max-h-[380px] overflow-y-auto overflow-x-hidden">
               
               {/* TAB 1: PROFILE PARTICULARS & LIFECYCLE TRAIL */}
               {dossierTab === 'particulars' && (

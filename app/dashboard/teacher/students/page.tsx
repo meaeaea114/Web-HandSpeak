@@ -403,8 +403,8 @@ export default function TeacherStudentsPage() {
           </div>
         </div>
 
-        {/* Ledger Table Container */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 pt-2">
+        {/* Ledger Table Container - horizontally scrollable on narrow screens so no column is ever hidden or clipped */}
+        <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 pt-2">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 text-stone-400 gap-3">
               <RefreshCw className="h-6 w-6 animate-spin text-[#F0AB31]" />
@@ -422,7 +422,7 @@ export default function TeacherStudentsPage() {
               <span className="text-[11px] text-stone-400">Student accounts are populated directly from the mobile application.</span>
             </div>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-2.5 min-w-[760px]">
               
               {/* Header Row */}
               <div className="grid grid-cols-[2.2fr_0.8fr_1.2fr_1.4fr_1.3fr_110px] gap-3 px-4 text-[10px] font-black tracking-widest text-[#B59275] dark:text-[#A0938A] uppercase select-none items-center">

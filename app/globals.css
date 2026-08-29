@@ -177,6 +177,20 @@ html, body {
 }
 
 /* =========================================
+   MOBILE INPUT ZOOM FIX (iOS Safari)
+   iOS Safari auto-zooms the page when a focused
+   form control renders text smaller than 16px.
+   Scoped to small viewports only so desktop/tablet
+   text sizing (text-xs, text-[10px], etc. used
+   throughout the existing design) is untouched.
+   ========================================= */
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* =========================================
    BACKGROUND THEME OVERRIDES
 
    FIX: the HandSpeak background is a texture/pattern, not a hero

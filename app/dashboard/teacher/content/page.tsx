@@ -308,7 +308,7 @@ export default function ContentManagementPage() {
 
       {/* ================= SCREEN 3: WIZARD STEP 1 ================= */}
       {screen === 'wizard_tutorial' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto overflow-x-hidden">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('dashboard')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>
@@ -364,7 +364,7 @@ export default function ContentManagementPage() {
 
       {/* ================= VIEW 4: WIZARD STEP 2 ================= */}
       {screen === 'wizard_practice' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto overflow-x-hidden">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl flex items-center justify-between gap-3 shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('wizard_tutorial')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>
@@ -414,7 +414,7 @@ export default function ContentManagementPage() {
 
       {/* ================= VIEW 5: WIZARD STEP 3 ================= */}
       {screen === 'wizard_activity' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto overflow-x-hidden">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl border border-amber-400/20 shadow-sm flex items-center justify-between gap-3 flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('wizard_practice')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>

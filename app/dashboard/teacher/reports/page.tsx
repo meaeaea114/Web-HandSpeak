@@ -170,7 +170,7 @@ export default function TeacherReportsPage() {
       {/* FILTER DECK AND LEDGER CANVAS */}
       <div className="bg-white/85 backdrop-blur-md p-6 rounded-2xl border border-white/80 shadow-[0_4px_20px_rgba(82,25,3,0.02)] space-y-6">
         
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="space-y-1">
             <h3 className="text-xs font-black uppercase tracking-widest text-[#521903]/80">
               {activeReport === 'StudentProgress' && 'Student Progress Report Matrix'}

@@ -737,7 +737,7 @@ export default function TeacherSettingsPage() {
         </nav>
 
         {/* Content Box */}
-        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-5 sm:p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-auto md:h-full flex flex-col justify-between overflow-y-auto">
+        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-5 sm:p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-auto md:h-full flex flex-col justify-between overflow-y-auto overflow-x-hidden">
           {activeTab === 'profile' && (
             <form onSubmit={handleProfileSave} className="h-full flex flex-col justify-between">
               <div className="space-y-6">
