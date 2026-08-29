@@ -14,7 +14,9 @@ import {
   Settings, 
   Bell, 
   MessageSquare, 
-  LogOut 
+  LogOut,
+  Menu,
+  X,
 } from 'lucide-react';
 import { getNotificationsRealtime } from '@/lib/data-service';
 
@@ -27,6 +29,7 @@ export default function TeacherDashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!user?.id) {
@@ -64,18 +67,41 @@ export default function TeacherDashboardLayout({
 
   return (
     <div
-      className="flex h-screen w-screen overflow-hidden p-6 gap-6 font-sans antialiased bg-[#F5E6C4] bg-cover bg-center bg-no-repeat"
+      className="flex h-screen w-screen overflow-hidden p-3 sm:p-6 gap-3 sm:gap-6 font-sans antialiased bg-[#F5E6C4] bg-cover bg-center bg-no-repeat"
       style={{ backgroundImage: "url('/bg-parchment.jpg')" }}
     >
-      {/* SIDEBAR COMPONENT PANEL */}
-      <aside className="w-76 bg-white/70 backdrop-blur-md rounded-[28px] p-5 flex flex-col justify-between border border-white/50 shadow-[4px_4px_16px_rgba(82,25,3,0.06)] flex-shrink-0">
+      {/* Mobile backdrop overlay - only shown when the drawer is open on small screens */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* SIDEBAR COMPONENT PANEL - collapses into a mobile drawer below lg, unchanged on desktop */}
+      <aside
+        className={`w-76 max-w-[85vw] bg-white/70 backdrop-blur-md rounded-[28px] p-5 flex flex-col justify-between border border-white/50 shadow-[4px_4px_16px_rgba(82,25,3,0.06)] flex-shrink-0 fixed inset-y-3 left-3 z-50 transition-transform duration-300 ease-in-out lg:static lg:inset-auto lg:z-auto lg:translate-x-0 ${
+          mobileSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%+12px)] lg:translate-x-0'
+        }`}
+      >
         <div className="space-y-6">
           {/* Logo Branding - Updated to use logo.png */}
-          <div className="flex items-center gap-3 px-2">
-            <div className="h-9 w-9 flex items-center justify-center overflow-hidden">
-              <img src="/logo.png" alt="HandSpeak Logo" className="h-full w-full object-contain" />
+          <div className="flex items-center justify-between gap-3 px-2">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 flex items-center justify-center overflow-hidden">
+                <img src="/logo.png" alt="HandSpeak Logo" className="h-full w-full object-contain" />
+              </div>
+              <span className="text-xl font-bold text-[#521903] tracking-tight">HandSpeak</span>
             </div>
-            <span className="text-xl font-bold text-[#521903] tracking-tight">HandSpeak</span>
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(false)}
+              className="lg:hidden p-1.5 rounded-lg text-[#521903] hover:bg-white/60"
+              aria-label="Close menu"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
           <nav className="space-y-2">
@@ -85,7 +111,10 @@ export default function TeacherDashboardLayout({
               return (
                 <button
                   key={mod.name}
-                  onClick={() => router.push(mod.path)}
+                  onClick={() => {
+                    router.push(mod.path);
+                    setMobileSidebarOpen(false);
+                  }}
                   className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold text-[13px] transition-all duration-150 text-left cursor-pointer hover:translate-x-1 ${
                     isActive 
                       ? 'bg-[#F2B33D]/20 text-[#521903] border-l-4 border-[#F2B33D] shadow-[inset_0_2px_4px_rgba(82,25,3,0.12)] scale-[0.99]' 
@@ -127,11 +156,21 @@ export default function TeacherDashboardLayout({
       </aside>
 
       {/* WORKSPACE CONTENT AREA */}
-      <div className="flex-1 flex flex-col gap-4 min-w-0 h-full">
+      <div className="flex-1 flex flex-col gap-3 sm:gap-4 min-w-0 h-full">
         {/* HEADER BAR STRIP */}
-        <header className="flex items-center justify-between gap-4 flex-shrink-0">
-          <div className="bg-white/80 backdrop-blur-sm px-6 py-2.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50 font-bold text-[#521903] text-xs tracking-wide">
-            {getHeaderTitle()}
+        <header className="flex items-center justify-between gap-2 sm:gap-4 flex-shrink-0 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(true)}
+              className="lg:hidden p-2.5 rounded-full bg-white/80 backdrop-blur-sm shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50 text-[#521903] shrink-0"
+              aria-label="Open menu"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            <div className="bg-white/80 backdrop-blur-sm px-4 sm:px-6 py-2.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50 font-bold text-[#521903] text-xs tracking-wide truncate">
+              {getHeaderTitle()}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -173,11 +212,11 @@ export default function TeacherDashboardLayout({
               <Settings className="h-4 w-4" />
             </button>
 
-            <div className="flex items-center gap-2 bg-white/80 pl-3 pr-4 py-1.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50">
-              <div className="h-5 w-5 rounded-full bg-[#F2B33D]/20 flex items-center justify-center text-[#521903] font-bold text-[10px]">
+            <div className="flex items-center gap-2 bg-white/80 pl-3 pr-3 sm:pr-4 py-1.5 rounded-full shadow-[2px_2px_8px_rgba(82,25,3,0.03)] border border-white/50">
+              <div className="h-5 w-5 shrink-0 rounded-full bg-[#F2B33D]/20 flex items-center justify-center text-[#521903] font-bold text-[10px]">
                 TF
               </div>
-              <span className="text-[11px] font-bold text-[#521903]">{user?.name || 'Teacher Faculty'}</span>
+              <span className="hidden sm:inline text-[11px] font-bold text-[#521903] max-w-[140px] truncate">{user?.name || 'Teacher Faculty'}</span>
             </div>
           </div>
         </header>

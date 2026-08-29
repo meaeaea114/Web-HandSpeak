@@ -144,13 +144,13 @@ export default function ContentManagementPage() {
   };
 
   return (
-    <div className="w-full flex flex-col p-1 font-sans antialiased text-[#521903] selection:bg-[#F2B33D]/30 h-[calc(100vh-50px)] overflow-hidden">
+    <div className="w-full flex flex-col p-1 font-sans antialiased text-[#521903] selection:bg-[#F2B33D]/30 h-auto lg:h-[calc(100vh-50px)] overflow-visible lg:overflow-hidden">
       
       {/* ========================================================================= */}
       {/* SCREEN 1: CONTENT DASHBOARD VIEW */}
       {/* ========================================================================= */}
       {screen === 'dashboard' && (
-        <div className="w-full flex flex-col gap-4 overflow-hidden animate-fadeIn">
+        <div className="w-full flex flex-col gap-4 overflow-visible lg:overflow-hidden animate-fadeIn">
           {/* HEADER BAR */}
           <div className="w-full bg-white rounded-[24px] border border-[#F5E6C4] p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm flex-shrink-0">
             <div className="space-y-0.5">
@@ -189,7 +189,7 @@ export default function ContentManagementPage() {
           </div>
 
           {/* DASHBOARD MODULE GRID */}
-          <div className="w-full h-[440px] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 items-stretch overflow-hidden flex-shrink-0">
+          <div className="w-full h-auto lg:h-[440px] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 items-stretch overflow-y-auto flex-shrink-0">
             {filteredModules.map((mod) => (
               <div 
                 key={mod.id} 
@@ -308,7 +308,7 @@ export default function ContentManagementPage() {
 
       {/* ================= SCREEN 3: WIZARD STEP 1 ================= */}
       {screen === 'wizard_tutorial' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-[480px] my-auto justify-start overflow-hidden">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('dashboard')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>
@@ -364,7 +364,7 @@ export default function ContentManagementPage() {
 
       {/* ================= VIEW 4: WIZARD STEP 2 ================= */}
       {screen === 'wizard_practice' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-[480px] my-auto justify-start overflow-hidden">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl flex items-center justify-between gap-3 shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('wizard_tutorial')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>
@@ -414,7 +414,7 @@ export default function ContentManagementPage() {
 
       {/* ================= VIEW 5: WIZARD STEP 3 ================= */}
       {screen === 'wizard_activity' && (
-        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-[480px] my-auto justify-start overflow-hidden">
+        <div className="w-full flex-1 flex flex-col gap-4 animate-fadeIn max-h-none lg:max-h-[480px] my-auto justify-start overflow-y-auto">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl border border-amber-400/20 shadow-sm flex items-center justify-between gap-3 flex-shrink-0">
             <div className="flex items-center gap-2">
               <button onClick={() => setScreen('wizard_practice')} className="p-2 bg-white/20 hover:bg-white text-white hover:text-[#521903] rounded-xl transition-colors cursor-pointer"><ArrowLeft className="h-4 w-4 stroke-[3]" /></button>
@@ -453,8 +453,8 @@ export default function ContentManagementPage() {
 
       {/* DELETE CONFIRMATION MODAL */}
       {deleteTargetId && (
-        <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white p-5 w-full max-w-sm rounded-[24px] shadow-2xl text-center space-y-3 border border-slate-100">
+        <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white p-5 w-full max-h-[90vh] overflow-y-auto my-4 max-w-sm rounded-[24px] shadow-2xl text-center space-y-3 border border-slate-100">
             <div className="h-10 w-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto"><AlertTriangle className="h-5 w-5" /></div>
             <div>
               <h3 className="text-sm font-black text-slate-800">Confirm Content Purge</h3>

@@ -208,7 +208,7 @@ export default function TeacherStudentsPage() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-hidden select-none">
+    <div className="w-full h-auto md:h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-visible md:overflow-hidden select-none">
       
       {/* Top Header Tag */}
       <div className="flex items-center justify-between shrink-0">
@@ -303,7 +303,7 @@ export default function TeacherStudentsPage() {
       </div>
 
       {/* Main Student Ledger Card Container */}
-      <div className="bg-white/80 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/60 dark:border-[#382F2A] shadow-xl flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="bg-white/80 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/60 dark:border-[#382F2A] shadow-xl flex-1 flex flex-col min-h-[560px] md:min-h-0 overflow-hidden">
         
         {/* Search & Filter Toolbar */}
         <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 pb-4 border-b border-stone-200/60 dark:border-[#382F2A] shrink-0">

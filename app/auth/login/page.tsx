@@ -156,11 +156,11 @@ export default function LoginPage() {
   const forgotPasswordHref = `/auth/forgot-password?name=${encodeURIComponent(formData.name.trim())}&email=${encodeURIComponent(formData.email.trim().toLowerCase())}`;
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
+    <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 py-8 font-sans antialiased">
       <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
 
-      {/* FIXED BOUNDARIES MASTER FRAME */}
-      <div className="w-full max-w-5xl h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
+      {/* FIXED BOUNDARIES MASTER FRAME - fluid height on mobile/tablet where panes stack, fixed height restored at md+ to match the original desktop design */}
+      <div className="w-full max-w-5xl h-auto md:h-[640px] bg-white border border-slate-200/80 shadow-[0_25px_60px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden grid grid-cols-1 md:grid-cols-12">
         
         {/* Left Pane: Campus Image Backdrop with Warm Yellow Glassmorphic Gradient Overlay */}
         <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative text-amber-955 text-center md:text-left overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">

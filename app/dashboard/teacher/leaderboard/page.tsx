@@ -226,9 +226,7 @@ export default function TeacherLeaderboardPage() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-hidden">
-      
-      {/* Top Header Row with Title */}
+    <div className="w-full h-auto md:h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-visible md:overflow-hidden">
       <div className="flex items-center justify-between shrink-0 px-1 pt-1">
         <div>
           <h2 className="text-sm font-black uppercase tracking-wider text-[#521903] dark:text-[#F0AB31] font-serif">
@@ -248,7 +246,7 @@ export default function TeacherLeaderboardPage() {
       </div>
 
       {/* Main Leaderboard Card */}
-      <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/70 dark:border-[#382F2A] shadow-xl flex-1 flex flex-col min-h-0 overflow-hidden space-y-4">
+      <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/70 dark:border-[#382F2A] shadow-xl flex-1 flex flex-col min-h-[560px] md:min-h-0 overflow-hidden space-y-4">
         
         {/* Controls Strip: Dynamic Scope Tabs + Dimensions */}
         <div className="space-y-3 shrink-0 pb-3 border-b border-stone-100 dark:border-[#382F2A]">
@@ -636,11 +634,11 @@ export default function TeacherLeaderboardPage() {
       {/* DETAILED STUDENT PERFORMANCE INSPECTION MODAL */}
       {selectedStudent && (
         <div 
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in"
           onClick={() => setSelectedStudent(null)}
         >
           <div 
-            className="bg-white dark:bg-[#1A1614] rounded-3xl p-6 max-w-md w-full border border-stone-200 dark:border-[#382F2A] shadow-2xl text-stone-800 dark:text-stone-100 space-y-5"
+            className="bg-white dark:bg-[#1A1614] rounded-3xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto my-4 border border-stone-200 dark:border-[#382F2A] shadow-2xl text-stone-800 dark:text-stone-100 space-y-5"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-stone-100 dark:border-[#382F2A] pb-3">

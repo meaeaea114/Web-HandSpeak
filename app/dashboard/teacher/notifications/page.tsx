@@ -52,12 +52,26 @@ export default function NotificationsPage() {
     return () => unsubscribe();
   }, [user?.id]);
 
-  const filteredNotifications = useMemo(() => {
-    if (filter === 'ALL') return notifications;
-    return notifications.filter((n) => n.type === filter);
-  }, [filter, notifications]);
+  // Notification preferences (System Preferences → Notification Preferences) are
+  // real, persisted per-user settings. Muting a category hides it from the "All
+  // Updates" view and excludes it from the unread badge, while remaining
+  // reviewable under its own tab.
+  const mutedTypes = useMemo(() => {
+    const muted: FilterType[] = [];
+    if (preferences.notifyAnnouncements === false) muted.push('announcement');
+    if (preferences.notifyFeedbackUpdates === false) muted.push('feedback');
+    return muted;
+  }, [preferences.notifyAnnouncements, preferences.notifyFeedbackUpdates]);
 
-  const unreadCount = useMemo(() => notifications.filter((n) => !n.isRead).length, [notifications]);
+  const filteredNotifications = useMemo(() => {
+    if (filter === 'ALL') return notifications.filter((n) => !mutedTypes.includes(n.type));
+    return notifications.filter((n) => n.type === filter);
+  }, [filter, notifications, mutedTypes]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.isRead && !mutedTypes.includes(n.type)).length,
+    [notifications, mutedTypes]
+  );
 
   const handleMarkAsRead = async (id: string, isRead: boolean) => {
     if (isRead) return;
@@ -106,6 +120,12 @@ export default function NotificationsPage() {
             </button>
           ))}
         </div>
+
+        {filter === 'ALL' && mutedTypes.length > 0 && (
+          <span className="text-[10px] font-semibold text-[#521903]/50 uppercase tracking-wider hidden sm:inline">
+            {mutedTypes.map((m) => FILTER_LABELS[m]).join(' & ')} muted — hidden from All Updates
+          </span>
+        )}
 
         <button
           onClick={handleMarkAllAsRead}

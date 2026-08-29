@@ -165,6 +165,18 @@
 }
 
 /* =========================================
+   RESPONSIVE SAFETY NET
+   Prevents accidental whole-page horizontal
+   scrolling on small screens without touching
+   the intentional overflow-x on individual
+   table/scroll containers.
+   ========================================= */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* =========================================
    BACKGROUND THEME OVERRIDES
    ========================================= */
 body {

@@ -543,7 +543,7 @@ export default function AdminSettingsPage() {
   const archivedActivities = accountActivities.filter((a) => a.status === 'archived');
 
   return (
-    <div className="w-full h-full flex flex-col text-stone-800 dark:text-stone-200 font-sans p-4 overflow-hidden relative">
+    <div className="w-full h-auto md:h-full flex flex-col text-stone-800 dark:text-stone-200 font-sans p-4 overflow-visible md:overflow-hidden relative">
       {toast && (
         <div
           className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-xl border text-xs font-semibold flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 ${
@@ -562,8 +562,8 @@ export default function AdminSettingsPage() {
       )}
 
       {deleteConfirmId && (
-        <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1A1816] rounded-3xl p-6 border border-amber-900/10 dark:border-stone-800 shadow-2xl max-w-sm w-full space-y-4 animate-in zoom-in-95 text-center">
+        <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#1A1816] rounded-3xl p-6 border border-amber-900/10 dark:border-stone-800 shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto my-4 space-y-4 animate-in zoom-in-95 text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-red-100 dark:bg-red-950/40 flex items-center justify-center text-red-600 dark:text-red-500">
               <Trash2 className="h-6 w-6" />
             </div>
@@ -592,8 +592,8 @@ export default function AdminSettingsPage() {
       )}
 
       {show2FAModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1A1816] rounded-3xl p-6 border border-amber-900/10 dark:border-stone-800 shadow-2xl max-w-md w-full space-y-5 animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#1A1816] rounded-3xl p-6 border border-amber-900/10 dark:border-stone-800 shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto my-4 space-y-5 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b dark:border-stone-800 pb-3">
               <div className="flex items-center gap-2 text-[#3C1E0A] dark:text-[#F0AB31]">
                 <ShieldCheck className="h-5 w-5 text-[#F0AB31]" />
@@ -672,8 +672,8 @@ export default function AdminSettingsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-5 flex-1 items-stretch min-h-0">
-        <nav className="md:col-span-3 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-4 border border-amber-900/10 dark:border-stone-800 shadow-sm flex flex-col justify-between h-full">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-5 flex-1 items-stretch min-h-[720px] md:min-h-0">
+        <nav className="md:col-span-3 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-4 border border-amber-900/10 dark:border-stone-800 shadow-sm flex flex-col justify-between h-auto md:h-full">
           <div className="flex flex-col gap-2">
             <button
               onClick={() => setActiveTab('profile')}
@@ -732,7 +732,7 @@ export default function AdminSettingsPage() {
           </div>
         </nav>
 
-        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-full flex flex-col justify-between overflow-y-auto">
+        <section className="md:col-span-9 bg-white/90 dark:bg-[#1A1816]/95 backdrop-blur-xl rounded-3xl p-5 sm:p-7 border border-amber-900/10 dark:border-stone-800 shadow-sm h-auto md:h-full flex flex-col justify-between overflow-y-auto">
           {activeTab === 'profile' && (
             <form onSubmit={handleProfileSave} className="h-full flex flex-col justify-between">
               <div className="space-y-6">

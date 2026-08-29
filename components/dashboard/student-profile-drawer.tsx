@@ -345,7 +345,7 @@ export function StudentProfileDrawer({
         </div>
 
         {/* Tab Views */}
-        <div className="flex-1 py-3 overflow-hidden flex flex-col justify-between">
+        <div className="flex-1 py-3 overflow-y-auto flex flex-col justify-between">
           
           {/* TAB 1: OVERVIEW & REAL GAMIFICATION POINTS */}
           {activeTab === 'overview' && (
@@ -399,7 +399,7 @@ export function StudentProfileDrawer({
               </div>
 
               {/* Real Gamification Stats Matrix */}
-              <div className="grid grid-cols-4 gap-1.5 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
                 <div className="p-2 rounded-xl bg-white dark:bg-[#0D0B0A] border border-stone-200/70 dark:border-[#382F2A]">
                   <span className="text-[8.5px] font-black uppercase text-stone-400 block">Total XP</span>
                   <span className="text-xs font-black text-[#521903] dark:text-[#F0AB31] block mt-0.5">

@@ -207,8 +207,8 @@ export default function TeacherReportsPage() {
         </div>
 
         {/* COMPONENT TABLE LOGS CONTAINER */}
-        <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
-          <table className="w-full text-left border-collapse text-xs font-bold text-slate-700">
+        <div className="bg-white rounded-xl border border-slate-100 overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs font-bold text-slate-700 min-w-[640px]">
             
             <thead>
               <tr className="border-b border-slate-200 text-[10px] text-slate-400 uppercase tracking-wider bg-neutral-50/70">

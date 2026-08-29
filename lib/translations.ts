@@ -28,6 +28,23 @@ export const translations = {
     loading: "Loading preferences...",
     errorSaving: "Failed to save preferences. Please try again.",
 
+    // Accessibility & Notification Preferences
+    accessibility: "Accessibility",
+    largerText: "Larger Text",
+    largerTextDesc: "Increase base text size across the app.",
+    highContrast: "High Contrast",
+    highContrastDesc: "Strengthen borders and text contrast for readability.",
+    reducedAnimations: "Reduced Animations",
+    reducedAnimationsDesc: "Minimize motion and transition effects.",
+    notificationPreferences: "Notification Preferences",
+    notifyAnnouncementsLabel: "System Announcements",
+    notifyAnnouncementsDesc: "Show system announcement notifications in your feed.",
+    notifyFeedbackLabel: "Feedback & Support Updates",
+    notifyFeedbackDesc: "Show updates on your feedback and support requests.",
+    notifySecurityLabel: "Security Notifications",
+    notifySecurityDesc: "Account security alerts cannot be turned off.",
+    alwaysOn: "Always On",
+
     // Sidebar / navigation
     feedbackSupport: "Feedback & Support",
     systemAnnouncements: "System Announcements",
@@ -66,6 +83,23 @@ export const translations = {
     appearanceTheme: "Tema ng Anyo",
     loading: "Naglo-load ng mga kagustuhan...",
     errorSaving: "Bigo na i-save ang mga kagustuhan. Pakisubukan muli.",
+
+    // Accessibility & Notification Preferences
+    accessibility: "Accessibility",
+    largerText: "Mas Malaking Teksto",
+    largerTextDesc: "Palakihin ang laki ng teksto sa buong app.",
+    highContrast: "Mataas na Contrast",
+    highContrastDesc: "Palakasin ang border at contrast ng teksto para sa mas madaling pagbasa.",
+    reducedAnimations: "Bawasan ang Animation",
+    reducedAnimationsDesc: "Bawasan ang galaw at transition effects.",
+    notificationPreferences: "Mga Kagustuhan sa Abiso",
+    notifyAnnouncementsLabel: "Mga Anunsyo ng System",
+    notifyAnnouncementsDesc: "Ipakita ang mga abiso ng anunsyo ng system sa iyong feed.",
+    notifyFeedbackLabel: "Mga Update sa Puna at Suporta",
+    notifyFeedbackDesc: "Ipakita ang mga update sa iyong puna at kahilingan sa suporta.",
+    notifySecurityLabel: "Mga Abiso sa Seguridad",
+    notifySecurityDesc: "Hindi maaaring i-off ang mga alerto sa seguridad ng account.",
+    alwaysOn: "Palaging Naka-on",
 
     // Sidebar / navigation
     feedbackSupport: "Puna at Suporta",

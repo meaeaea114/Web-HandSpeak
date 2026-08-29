@@ -9,8 +9,14 @@ import Image from 'next/image';
 
 import { usePreferences } from '@/lib/preferences-context';
 import { useTranslation } from '@/lib/translations';
+import { X } from 'lucide-react';
 
-export default function Sidebar() {
+interface SidebarProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   
@@ -29,19 +35,44 @@ export default function Sidebar() {
   const displayRole = user?.role ? `${user.role.toUpperCase()} SESSION` : 'SESSION ADMINISTRATOR';
 
   return (
-    <aside className="w-72 bg-white/60 dark:bg-[#1A1816]/80 backdrop-blur-xl p-5 flex flex-col h-full shrink-0 border border-white/50 dark:border-stone-800/50 rounded-[28px] shadow-xl">
-      <div className="flex items-center gap-3 px-3 py-4 mb-6">
-        <div className="h-10 w-10 relative shrink-0">
-          <Image 
-            src="/logo.png" 
-            alt="HandSpeak Mascot" 
-            fill 
-            sizes="40px" 
-            className="object-contain" 
-            priority 
-          />
+    <>
+      {/* Mobile backdrop overlay - only rendered/visible when drawer is open on small screens */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={cn(
+          "w-72 max-w-[85vw] bg-white/60 dark:bg-[#1A1816]/80 backdrop-blur-xl p-5 flex flex-col h-full shrink-0 border border-white/50 dark:border-stone-800/50 rounded-[28px] shadow-xl",
+          "fixed inset-y-5 left-5 z-50 transition-transform duration-300 ease-in-out lg:static lg:inset-auto lg:z-auto lg:translate-x-0",
+          isOpen ? "translate-x-0" : "-translate-x-[calc(100%+20px)] lg:translate-x-0"
+        )}
+      >
+      <div className="flex items-center justify-between gap-3 px-3 py-4 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 relative shrink-0">
+            <Image 
+              src="/logo.png" 
+              alt="HandSpeak Mascot" 
+              fill 
+              sizes="40px" 
+              className="object-contain" 
+              priority 
+            />
+          </div>
+          <span className="font-black text-xl tracking-tight text-[#521903] dark:text-[#F0AB31]">HandSpeak</span>
         </div>
-        <span className="font-black text-xl tracking-tight text-[#521903] dark:text-[#F0AB31]">HandSpeak</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="lg:hidden p-1.5 rounded-lg text-stone-500 hover:bg-white/60 dark:text-stone-400 dark:hover:bg-white/10"
+          aria-label="Close menu"
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
       
       <nav className="flex-1 space-y-3">
@@ -81,6 +112,7 @@ export default function Sidebar() {
           {t('logout' as any) || 'Logout'} 
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -165,7 +165,7 @@ export default function GesturePerformancePage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[560px]">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
                     <th className="px-6 py-4 text-left text-sm font-semibold text-foreground">Sign</th>

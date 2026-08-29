@@ -342,8 +342,8 @@ export default function RegisterPage() {
     <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 font-sans antialiased">
       <div className="fixed inset-0 -z-10 select-none pointer-events-none bg-[#F5E6C4] bg-[url('/bg-parchment.jpg')] bg-cover bg-center bg-no-repeat" />
 
-      {/* MASTER CONTAINER FRAME */}
-      <div className="w-full max-w-5xl h-[620px] bg-white border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.14)] rounded-3xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
+      {/* MASTER CONTAINER FRAME - fluid height on mobile/tablet where panes stack, fixed height restored at md+ to match the original desktop design */}
+      <div className="w-full max-w-5xl h-auto md:h-[620px] bg-white border border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.14)] rounded-3xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
         
         {/* Left Side Navigation Control Panel */}
         <div className="md:col-span-4 h-full p-6 flex flex-col justify-between relative overflow-hidden border-b md:border-b-0 md:border-r border-amber-200 bg-gradient-to-br from-amber-400 via-amber-300 to-amber-500">
@@ -691,7 +691,7 @@ export default function RegisterPage() {
                     {/* Password Policy Checks */}
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px] space-y-1">
                       <span className="font-bold text-slate-600 block mb-1">Password Requirements:</span>
-                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1">
                         <span className={hasMinLength ? "text-emerald-600 font-medium" : "text-slate-400"}>
                           {hasMinLength ? "✓" : "•"} Min. 8 characters
                         </span>

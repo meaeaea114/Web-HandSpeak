@@ -13,6 +13,16 @@ export interface UserPreferences {
   timeFormat: '12h' | '24h';
   theme: Theme;
   soundEnabled: boolean;
+  /** Accessibility: renders text at a larger base size across the app. */
+  largeText: boolean;
+  /** Accessibility: increases color/border contrast across the app. */
+  highContrast: boolean;
+  /** Accessibility: disables non-essential CSS transitions/animations. */
+  reducedMotion: boolean;
+  /** Notification preference: show system announcement notifications in the notification feed. */
+  notifyAnnouncements: boolean;
+  /** Notification preference: show feedback & support update notifications in the notification feed. */
+  notifyFeedbackUpdates: boolean;
 }
 
 const defaultPreferences: UserPreferences = {
@@ -21,6 +31,11 @@ const defaultPreferences: UserPreferences = {
   timeFormat: '12h',
   theme: 'system',
   soundEnabled: true,
+  largeText: false,
+  highContrast: false,
+  reducedMotion: false,
+  notifyAnnouncements: true,
+  notifyFeedbackUpdates: true,
 };
 
 interface PreferencesContextType {
@@ -90,6 +105,14 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
       root.classList.add('theme-system');
     }
   }, [preferences.theme]);
+
+  // Apply Accessibility Classes (real, app-wide effects — not visual-only toggles)
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('a11y-large-text', preferences.largeText);
+    root.classList.toggle('a11y-high-contrast', preferences.highContrast);
+    root.classList.toggle('a11y-reduced-motion', preferences.reducedMotion);
+  }, [preferences.largeText, preferences.highContrast, preferences.reducedMotion]);
 
   // Update function (State + Firestore)
   const updatePreference = async <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => {

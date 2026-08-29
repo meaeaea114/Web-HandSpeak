@@ -163,13 +163,13 @@ export default function AdminTeachersPage() {
 
       {/* Tab: Active Teachers */}
       {activeTab === "teachers" && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
           {loading ? (
             <div className="p-8 text-center text-xs text-slate-400">Loading active faculty...</div>
           ) : filteredTeachers.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400">No active teachers found.</div>
           ) : (
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[640px]">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="py-3 px-4">Faculty Member</th>
@@ -210,13 +210,13 @@ export default function AdminTeachersPage() {
 
       {/* Tab: Pending Requests */}
       {activeTab === "requests" && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
           {loading ? (
             <div className="p-8 text-center text-xs text-slate-400">Loading pending requests...</div>
           ) : pendingRequests.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400">No registration requests awaiting approval.</div>
           ) : (
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[640px]">
               <thead className="bg-amber-50/60 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="py-3 px-4">Applicant</th>
@@ -289,8 +289,8 @@ export default function AdminTeachersPage() {
 
       {/* Details & Document Verification Modal */}
       {selectedRequest && !rejectionModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto my-4 p-6 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-800 text-base">Verify Applicant Credentials</h3>
               <button onClick={() => setSelectedRequest(null)} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -369,8 +369,8 @@ export default function AdminTeachersPage() {
 
       {/* Documented Rejection Reason Modal */}
       {rejectionModalOpen && selectedRequest && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto my-4 p-6 space-y-4 animate-in fade-in zoom-in-95">
             <h3 className="font-bold text-slate-800 text-base">Specify Rejection Reason</h3>
             <p className="text-xs text-slate-500">
               State why <strong>{selectedRequest.fullName}</strong> cannot be authorized. This reason will be recorded and emailed to the applicant.

@@ -13,11 +13,16 @@ import {
   Shield,
   BookOpen,
   GraduationCap,
+  Menu,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-export function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void;
+}
+
+export function Header({ onMenuClick }: HeaderProps = {}) {
   const { user, logout } = useAuth();
   const router = useRouter();
   const { preferences } = usePreferences();
@@ -49,9 +54,20 @@ export function Header() {
   const avatarUrl = user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(displayName)}`;
 
   return (
-    <header className="h-16 bg-white dark:bg-[#1A1816] border-b border-slate-200 dark:border-stone-800 px-6 flex items-center justify-between sticky top-0 z-30 shadow-sm transition-colors duration-300">
-      <div className="flex items-center gap-3 w-96">
-        <div className="relative w-full">
+    <header className="h-auto min-h-16 bg-white dark:bg-[#1A1816] border-b border-slate-200 dark:border-stone-800 px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3 sticky top-0 z-30 shadow-sm transition-colors duration-300">
+      <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 lg:w-96 lg:flex-none">
+        {/* Mobile sidebar toggle - hidden on desktop where the sidebar is always visible */}
+        {onMenuClick && (
+          <button
+            type="button"
+            onClick={onMenuClick}
+            className="lg:hidden p-2 -ml-1 rounded-lg text-slate-500 dark:text-stone-400 hover:bg-slate-100 dark:hover:bg-[#2A2621] transition-colors shrink-0"
+            aria-label="Open menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
+        <div className="relative w-full min-w-0 hidden sm:block">
           <Search className="w-4 h-4 text-slate-400 dark:text-stone-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -59,9 +75,17 @@ export function Header() {
             className="w-full pl-9 pr-4 py-1.5 text-xs bg-slate-50 dark:bg-[#2A2621] border border-slate-200 dark:border-stone-700 text-slate-800 dark:text-stone-200 placeholder:text-slate-400 dark:placeholder:text-stone-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2A3B5C]/20 dark:focus:ring-[#F0AB31]/30 focus:border-[#2A3B5C] dark:focus:border-[#F0AB31] transition-all"
           />
         </div>
+        {/* Compact search icon-only trigger on very small screens keeps the field accessible without eating layout width */}
+        <button
+          type="button"
+          aria-label={t('searchPlaceholder')}
+          className="sm:hidden p-2 rounded-lg text-slate-500 dark:text-stone-400 hover:bg-slate-100 dark:hover:bg-[#2A2621] transition-colors shrink-0"
+        >
+          <Search className="w-4 h-4" />
+        </button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
         {/* Live Notifications Dropdown */}
         <div className="relative">
           <button
@@ -75,7 +99,7 @@ export function Header() {
           </button>
 
           {showNotifications && (
-            <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-[#1A1816] rounded-xl shadow-xl border border-slate-200 dark:border-stone-800 py-2 z-50 animate-in fade-in slide-in-from-top-2">
+            <div className="absolute right-0 mt-2 w-[90vw] max-w-80 bg-white dark:bg-[#1A1816] rounded-xl shadow-xl border border-slate-200 dark:border-stone-800 py-2 z-50 animate-in fade-in slide-in-from-top-2">
               <div className="px-4 py-2 border-b border-slate-100 dark:border-stone-800 flex items-center justify-between">
                 <span className="font-semibold text-xs text-slate-800 dark:text-stone-200">{t('notifications')}</span>
                 <span className="text-[10px] text-slate-400 dark:text-stone-500">{announcements.length} {t('newLabel')}</span>
@@ -128,7 +152,7 @@ export function Header() {
           </button>
 
           {showUserMenu && (
-            <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-[#1A1816] rounded-xl shadow-xl border border-slate-200 dark:border-stone-800 py-1.5 z-50 animate-in fade-in slide-in-from-top-2">
+            <div className="absolute right-0 mt-2 w-[85vw] max-w-52 bg-white dark:bg-[#1A1816] rounded-xl shadow-xl border border-slate-200 dark:border-stone-800 py-1.5 z-50 animate-in fade-in slide-in-from-top-2">
               <div className="px-3.5 py-2 border-b border-slate-100 dark:border-stone-800">
                 <p className="text-xs font-semibold text-slate-800 dark:text-stone-200 truncate">{displayName}</p>
                 <p className="text-[10px] text-slate-500 dark:text-stone-400 truncate">{user?.email || "admin@handspeak.edu"}</p>

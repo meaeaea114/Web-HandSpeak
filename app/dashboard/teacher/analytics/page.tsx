@@ -269,7 +269,7 @@ export default function TeacherAnalyticsDashboardPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-5rem)] flex flex-col justify-between p-1 max-w-[96rem] mx-auto overflow-hidden select-none gap-2.5">
+    <div className="h-auto md:h-[calc(100vh-5rem)] flex flex-col justify-between p-1 max-w-[96rem] mx-auto overflow-visible md:overflow-hidden select-none gap-2.5">
       
       {/* SECTION 1: TOP GLOBAL SEARCH & FILTER HEADER */}
       <div className="bg-white/85 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white/70 shadow-[3px_3px_12px_rgba(82,25,3,0.03)] flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
@@ -330,7 +330,7 @@ export default function TeacherAnalyticsDashboardPage() {
       </div>
 
       {/* SECTION 2: MASTER / DETAIL 2-COLUMN PANELS (MATCHING IMAGE FORMAT) */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 flex-1 min-h-0">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 flex-1 min-h-[640px] md:min-h-0">
         
         {/* LEFT COLUMN: TIER CATEGORY SELECTOR (MATCHES SETTINGS NAVIGATION) */}
         <div className="md:col-span-4 bg-white/85 backdrop-blur-md p-4 rounded-3xl border border-white/70 shadow-[4px_4px_16px_rgba(82,25,3,0.03)] flex flex-col justify-between">

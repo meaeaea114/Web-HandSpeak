@@ -752,7 +752,7 @@ export default function TeacherAccountManagementPage() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-hidden">
+    <div className="w-full h-auto md:h-full flex flex-col font-sans gap-4 text-stone-800 dark:text-stone-100 overflow-visible md:overflow-hidden">
       
       {/* Top Header Row with Title on Left and Action Buttons on Right */}
       <div className="flex items-center justify-between shrink-0 px-1 pt-1">
@@ -794,7 +794,7 @@ export default function TeacherAccountManagementPage() {
       {/* VIEW A: LIST FRAME */}
       {/* ========================================================================= */}
       {viewMode === 'list' && (
-        <div className="space-y-4 flex-1 flex flex-col min-h-0">
+        <div className="space-y-4 flex-1 flex flex-col min-h-[600px] md:min-h-0">
           
           {/* Search & Filter Controls Bar */}
           <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-xl p-3.5 rounded-full border border-white/70 dark:border-[#382F2A] shadow-xs shrink-0 flex items-center justify-between gap-4">
@@ -928,7 +928,7 @@ export default function TeacherAccountManagementPage() {
               No student records found matching the specified criteria.
             </div>
           ) : (
-            <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/70 dark:border-[#382F2A] shadow-xl overflow-hidden flex-1 flex flex-col min-h-0">
+            <div className="bg-white/90 dark:bg-[#1A1614]/85 backdrop-blur-2xl rounded-3xl p-5 border border-white/70 dark:border-[#382F2A] shadow-xl overflow-hidden flex-1 flex flex-col min-h-[420px] md:min-h-0">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
                 <table className="w-full text-left border-collapse text-xs table-fixed">
                   
@@ -1349,7 +1349,7 @@ export default function TeacherAccountManagementPage() {
           {/* Validation Feedback Matrix Banner */}
           {validationResult && (
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-3">
-              <div className="grid grid-cols-4 gap-2 text-center text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                 <div className="p-2 rounded-xl bg-white border border-stone-200">
                   <span className="text-[10px] text-stone-400 uppercase font-black block">Total Processed</span>
                   <strong className="text-sm font-black text-stone-800">{validationResult.totalRows}</strong>
@@ -1369,8 +1369,8 @@ export default function TeacherAccountManagementPage() {
               </div>
 
               {/* Preview Scroll Ledger */}
-              <div className="max-h-[140px] overflow-y-auto border border-stone-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-[11px]">
+              <div className="max-h-[140px] overflow-y-auto overflow-x-auto border border-stone-200 rounded-xl">
+                <table className="w-full min-w-[420px] text-left text-[11px]">
                   <thead className="bg-stone-100 text-[9.5px] font-black uppercase tracking-wider text-stone-500">
                     <tr>
                       <th className="p-2">Row</th>
@@ -1471,8 +1471,8 @@ export default function TeacherAccountManagementPage() {
       {/* AUDIT, LOGIN LOGS & READ-ONLY CREDENTIALS WITH PRINT SLIP MODAL */}
       {/* ========================================================================= */}
       {selectedStudent && !showRejectModal && !deleteConfirmStudent && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1A1614] rounded-3xl max-w-2xl w-full shadow-2xl flex flex-col overflow-hidden border border-stone-200 dark:border-[#382F2A] animate-fadeIn text-stone-800 dark:text-stone-100">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#1A1614] rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto my-4 shadow-2xl flex flex-col border border-stone-200 dark:border-[#382F2A] animate-fadeIn text-stone-800 dark:text-stone-100">
             
             {/* Modal Top Header Bar */}
             <div className="px-6 py-4 border-b border-stone-100 dark:border-[#382F2A] flex items-center justify-between bg-stone-50/60 dark:bg-[#0D0B0A]">
@@ -1845,8 +1845,8 @@ export default function TeacherAccountManagementPage() {
       {/* PERMANENT DELETE CONFIRMATION DIALOG MODAL */}
       {/* ========================================================================= */}
       {deleteConfirmStudent && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1A1614] rounded-3xl p-6 border border-stone-200 dark:border-[#382F2A] shadow-2xl max-w-md w-full space-y-4 animate-in zoom-in-95 text-stone-800 dark:text-stone-100 text-center">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#1A1614] rounded-3xl p-6 border border-stone-200 dark:border-[#382F2A] shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto my-4 space-y-4 animate-in zoom-in-95 text-stone-800 dark:text-stone-100 text-center">
             
             <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center mx-auto">
               <Trash2 className="h-6 w-6" />
@@ -1888,8 +1888,8 @@ export default function TeacherAccountManagementPage() {
       {/* REJECTION REASON MODAL */}
       {/* ========================================================================= */}
       {showRejectModal && selectedStudent && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1A1614] rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4 border border-stone-200 dark:border-[#382F2A] animate-fadeIn text-stone-800 dark:text-stone-100">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#1A1614] rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto my-4 p-5 shadow-2xl space-y-4 border border-stone-200 dark:border-[#382F2A] animate-fadeIn text-stone-800 dark:text-stone-100">
             
             <div className="flex items-center justify-between border-b border-stone-100 dark:border-[#382F2A] pb-2.5">
               <div className="flex items-center gap-1.5 text-rose-600">

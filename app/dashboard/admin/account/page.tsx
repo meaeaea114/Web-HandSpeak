@@ -365,7 +365,7 @@ export default function AccountManagementPage() {
           </div>
         ) : (
           <div className="overflow-x-auto border border-border rounded-md">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[560px]">
               <thead className="bg-muted/50 border-b border-border text-muted-foreground font-medium">
                 <tr>
                   <th className="p-3">User</th>
@@ -469,8 +469,8 @@ export default function AccountManagementPage() {
 
       {/* View Request Details Modal */}
       {isViewModalOpen && selectedRequest && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-lg max-w-md w-full p-6 space-y-4 shadow-lg">
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-card border border-border rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto my-4 p-6 space-y-4 shadow-lg">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="text-base font-bold">Account Access Request</h3>
               <button 

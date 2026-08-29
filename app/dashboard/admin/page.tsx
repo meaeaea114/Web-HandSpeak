@@ -425,8 +425,8 @@ export default function AdminAccountManagementPage() {
               No account requests matching the criteria.
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse min-w-[640px]">
                 <thead className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <tr>
                     <th className="px-5 py-3">Applicant Name</th>
@@ -813,8 +813,8 @@ export default function AdminAccountManagementPage() {
 
       {/* DETAILED APPLICANT AUDIT / REVIEW MODAL */}
       {selectedRequest && !showRejectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-4xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto my-4 shadow-2xl flex flex-col border border-slate-200 animate-fadeIn">
             
             {/* Modal Top Bar */}
             <div className="px-6 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
@@ -1032,8 +1032,8 @@ export default function AdminAccountManagementPage() {
 
       {/* REJECT & FEEDBACK MODAL */}
       {showRejectModal && selectedRequest && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4 border border-slate-200 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto my-4 p-5 shadow-2xl space-y-4 border border-slate-200 animate-fadeIn">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-1.5 text-rose-700">
                 <AlertCircle className="h-4 w-4" />
