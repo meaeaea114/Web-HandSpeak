@@ -3,12 +3,16 @@ Offline training script for the HandSpeak gesture LSTM.
 
 Input data format (expected in ./training_data/):
     training_data/
-      hello.npy        # shape (num_samples, 30, 126) — 30 frames x 126 features
-      thankyou.npy
-      i_love_you.npy
+      phrases_hello.npy      # shape (num_samples, 30, 126) — 30 frames x 126 features
+      phrases_thank_you.npy
+      alphabet_a.npy
       ...
-Each .npy file's name (minus extension) becomes the class label, matching
-the `gestureKey` your app already uses (e.g. lesson.symbol / phrase id).
+Each .npy file's name (minus extension) becomes the class label. Filenames
+are `<category>_<gestureKey>` — the same Firestore document id used for the
+gesture_training_data collection (see
+lib/content-service.ts:buildGestureTrainingDocId) — not the bare gestureKey,
+so two different signs in different categories can never produce colliding
+filenames/labels here even if their gestureKey text is identical.
 
 Each sample is a (30, 126) sequence: 30 frames, each frame a flattened
 21-point x 3-coord landmark vector per hand for up to 2 hands

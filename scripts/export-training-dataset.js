@@ -35,10 +35,15 @@
  *      net against any pre-existing/raw sequences.
  *   5. Rejects and reports (does not silently drop) any sample that fails
  *      validation, with a reason.
- *   6. Writes one training_data/<gestureKey>.npy per gesture that has at
- *      least one valid sample, shape (N, sequenceLength, frameLength),
- *      float64, in real NPY format (no numpy/python dependency needed to
- *      write it — see writeNpy() below).
+ *   6. Writes one training_data/<category>_<gestureKey>.npy per gesture
+ *      that has at least one valid sample, shape (N, sequenceLength,
+ *      frameLength), float64, in real NPY format (no numpy/python
+ *      dependency needed to write it — see writeNpy() below). The filename
+ *      is the Firestore document id (category_gestureKey), not the bare
+ *      gestureKey field, so two different signs in different categories
+ *      that happen to share a gestureKey can never collide/overwrite each
+ *      other's file — the document id is unique by construction (see
+ *      lib/content-service.ts:buildGestureTrainingDocId).
  *   7. Prints a full report: classes found, samples per class, rejected
  *      samples + reasons, and the final shape written per class. If NO
  *      class has any valid samples, it says so plainly and writes nothing.
@@ -246,6 +251,15 @@ async function main() {
       continue;
     }
 
+    // The document id is already `${category}_${gestureKey}` (see
+    // lib/content-service.ts:buildGestureTrainingDocId) and Firestore
+    // document ids are unique by construction, so using it as the export
+    // filename/class-label guarantees two different signs — even ones that
+    // happen to share the same gestureKey text in different categories —
+    // can never overwrite each other's .npy file. Using the bare gestureKey
+    // here instead would not have that guarantee.
+    const exportLabel = doc.id;
+
     const sequenceLength = data.sequenceLength || DEFAULT_SEQUENCE_LENGTH;
     const frameLength = data.frameLength || DEFAULT_FEATURE_LENGTH;
     const wrappedSamples = Array.isArray(data.trainingSequences) ? data.trainingSequences : [];
@@ -259,7 +273,7 @@ async function main() {
       if (!validation.valid) {
         rejectedForThisClass++;
         report.totalRejectedSamples++;
-        report.rejections.push({ gestureKey, sampleIndex: idx, reason: validation.reason });
+        report.rejections.push({ gestureKey, exportLabel, sampleIndex: idx, reason: validation.reason });
         return;
       }
       const normalized = raw.map((frame) => normalizeFeatureVector(frame));
@@ -269,6 +283,7 @@ async function main() {
     if (validSamples.length === 0) {
       report.classes.push({
         gestureKey,
+        exportLabel,
         category: data.category || null,
         validSamples: 0,
         rejectedSamples: rejectedForThisClass,
@@ -277,12 +292,13 @@ async function main() {
       continue;
     }
 
-    const outPath = path.join(DATA_DIR, `${gestureKey}.npy`);
+    const outPath = path.join(DATA_DIR, `${exportLabel}.npy`);
     writeNpy(outPath, validSamples, [validSamples.length, sequenceLength, frameLength]);
     anyWritten = true;
 
     report.classes.push({
       gestureKey,
+      exportLabel,
       category: data.category || null,
       validSamples: validSamples.length,
       rejectedSamples: rejectedForThisClass,
@@ -296,9 +312,9 @@ async function main() {
   console.log(`Gesture classes found: ${report.classes.length}`);
   for (const c of report.classes) {
     if (c.written) {
-      console.log(`  - ${c.gestureKey} (${c.category}): ${c.validSamples} valid samples -> shape ${JSON.stringify(c.shape)}, ${c.rejectedSamples} rejected`);
+      console.log(`  - ${c.exportLabel} (gestureKey: ${c.gestureKey}, category: ${c.category}): ${c.validSamples} valid samples -> shape ${JSON.stringify(c.shape)}, ${c.rejectedSamples} rejected`);
     } else {
-      console.log(`  - ${c.gestureKey} (${c.category}): 0 valid samples (${c.rejectedSamples} rejected) — NOT written, insufficient data`);
+      console.log(`  - ${c.exportLabel} (gestureKey: ${c.gestureKey}, category: ${c.category}): 0 valid samples (${c.rejectedSamples} rejected) — NOT written, insufficient data`);
     }
   }
   console.log(`\nTotal valid samples exported: ${report.totalValidSamples}`);
@@ -307,7 +323,7 @@ async function main() {
     console.log('\nRejection reasons:');
     for (const r of report.rejections) {
       if (r.doc) console.log(`  - doc ${r.doc}: ${r.reason}`);
-      else console.log(`  - ${r.gestureKey} sample #${r.sampleIndex}: ${r.reason}`);
+      else console.log(`  - ${r.exportLabel} (gestureKey: ${r.gestureKey}) sample #${r.sampleIndex}: ${r.reason}`);
     }
   }
 
