@@ -18,7 +18,8 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
-  Layers,
+  Sliders,
+  Cpu,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -47,12 +48,8 @@ function categoryLabel(value: string): string {
 function parseDifficultyLabel(levelStr?: string): { label: string; color: string } {
   if (!levelStr) return { label: 'Easy', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
   const lower = levelStr.toLowerCase();
-  if (lower.includes('hard')) {
-    return { label: 'Hard', color: 'bg-rose-50 text-rose-700 border-rose-200' };
-  }
-  if (lower.includes('medium')) {
-    return { label: 'Medium', color: 'bg-amber-50 text-amber-700 border-amber-200' };
-  }
+  if (lower.includes('hard')) return { label: 'Hard', color: 'bg-rose-50 text-rose-700 border-rose-200' };
+  if (lower.includes('medium')) return { label: 'Medium', color: 'bg-amber-50 text-amber-700 border-amber-200' };
   return { label: 'Easy', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
 }
 
@@ -70,7 +67,7 @@ function resolveImagePath(rawPath?: string): string[] {
     `/assets/pictures/${filename}`,
     `/assets/pictures/${nameWithoutExt}.jpg`,
     `/assets/pictures/${nameWithoutExt}.png`,
-    `/assets/pictures/${nameWithoutExt}.toUpperCase()}.jpg`,
+    `/assets/pictures/${nameWithoutExt.toUpperCase()}.jpg`,
     `/assets/pictures/${nameWithoutExt.toUpperCase()}.png`,
     `/assets/${clean}`,
     `/images/${filename}`,
@@ -390,13 +387,13 @@ export default function ContentApprovalPage() {
             className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-full text-slate-600 transition-all cursor-pointer disabled:opacity-50"
             title="Refresh Live Count"
           >
-            <RefreshCw className={`h-3 w-3 ${publishedLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${publishedLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
         {publishedLoading ? (
           <p className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-            <Loader2 className="h-3 w-3 animate-spin" /> Loading published counts...
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading published counts...
           </p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
@@ -412,9 +409,8 @@ export default function ContentApprovalPage() {
         )}
       </div>
 
-      {/* 2. Filter & Navigation Toolbar */}
+      {/* 2. Filter Toolbar */}
       <div className="bg-white p-4 rounded-3xl border border-[#F5E6C4] shadow-sm space-y-3">
-        {/* Status Filter Chips */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <button
             onClick={() => setFilterStatus('Pending')}
@@ -476,7 +472,6 @@ export default function ContentApprovalPage() {
           </button>
         </div>
 
-        {/* Search & Category / Difficulty Dropdowns */}
         <div className="flex flex-col md:flex-row gap-2.5 md:items-center justify-between pt-2 border-t border-slate-100">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -535,7 +530,7 @@ export default function ContentApprovalPage() {
         </div>
       )}
 
-      {/* 3. Submissions Accordion Stack */}
+      {/* 3. Submissions Accordion List */}
       <div className="space-y-3">
         {filteredSubmissions.map((content) => {
           const isExpanded = expandedCardId === content.id;
@@ -544,6 +539,8 @@ export default function ContentApprovalPage() {
           const isApproved = content.status === 'approved';
           const isRejected = content.status === 'rejected';
           const isArchived = !!content.isArchived;
+          const isDeletionRequest = content.submissionType === 'delete';
+          const isModelCalibration = content.submissionType === 'train_parameters';
           const diffMeta = parseDifficultyLabel(content.level || content.difficulty);
 
           return (
@@ -552,23 +549,45 @@ export default function ContentApprovalPage() {
               className={`bg-white rounded-2xl border shadow-sm transition-all duration-200 overflow-hidden ${
                 isArchived
                   ? 'border-slate-200 bg-slate-50/70 opacity-80'
+                  : isDeletionRequest
+                  ? 'border-rose-300 ring-2 ring-rose-300/30'
+                  : isModelCalibration
+                  ? 'border-blue-300 ring-2 ring-blue-300/30'
                   : isExpanded
                   ? 'border-[#F2B33D] ring-2 ring-[#F2B33D]/20 shadow-md'
                   : 'border-slate-200 hover:border-slate-300'
               }`}
             >
-              {/* COMPACT SUMMARY ROW (Click to expand / collapse) */}
+              {/* COMPACT SUMMARY ROW */}
               <div
                 onClick={() => setExpandedCardId(isExpanded ? null : content.id)}
                 className="p-4 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-slate-50/50 transition-colors"
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className="h-8 w-8 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0 text-[#B4790C]">
-                    <BookOpen className="h-4 w-4" />
+                  <div
+                    className={`h-8 w-8 rounded-xl border flex items-center justify-center flex-shrink-0 ${
+                      isModelCalibration
+                        ? 'bg-blue-50 border-blue-200 text-blue-600'
+                        : isDeletionRequest
+                        ? 'bg-rose-50 border-rose-200 text-rose-600'
+                        : 'bg-amber-50 border-amber-200 text-[#B4790C]'
+                    }`}
+                  >
+                    {isModelCalibration ? <Sliders className="h-4 w-4" /> : isDeletionRequest ? <Trash2 className="h-4 w-4" /> : <BookOpen className="h-4 w-4" />}
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      {isModelCalibration && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-300">
+                          Model Calibration
+                        </span>
+                      )}
+                      {isDeletionRequest && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-300">
+                          Deletion Request
+                        </span>
+                      )}
                       <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-50 border border-amber-200 text-[#B4790C]">
                         {categoryLabel(content.category)}
                       </span>
@@ -576,7 +595,7 @@ export default function ContentApprovalPage() {
                         {diffMeta.label}
                       </span>
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
                           isPending
                             ? 'bg-amber-50 border-amber-200 text-amber-600'
                             : isApproved
@@ -589,11 +608,6 @@ export default function ContentApprovalPage() {
                         {isRejected && <XCircle className="h-2.5 w-2.5" />}
                         {content.status}
                       </span>
-                      {isArchived && (
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-200 text-slate-700">
-                          Archived
-                        </span>
-                      )}
                     </div>
 
                     <h4 className="text-sm font-black text-slate-800 truncate" title={content.questionText}>
@@ -602,7 +616,6 @@ export default function ContentApprovalPage() {
                   </div>
                 </div>
 
-                {/* Submitter & Date Preview + Chevron */}
                 <div className="flex items-center gap-4 flex-shrink-0">
                   <div className="hidden sm:block text-right text-[11px] text-slate-400 font-bold">
                     <p className="text-slate-700 truncate max-w-[140px]">{content.createdByName || 'Faculty'}</p>
@@ -622,41 +635,47 @@ export default function ContentApprovalPage() {
               {isExpanded && (
                 <div className="px-5 pb-5 pt-3 border-t border-slate-100 space-y-4 animate-fadeIn bg-slate-50/30">
                   <div className="flex flex-col md:flex-row gap-5 items-start justify-between">
-                    {/* Left: Question Prompt, Choices, and Metadata */}
                     <div className="space-y-3 flex-1">
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
-                          Full Question Prompt:
+                          {isModelCalibration ? 'Target Gesture Definition:' : 'Full Question Prompt:'}
                         </span>
                         <p className="text-sm font-black text-slate-800">
                           {content.questionText || 'Solve:'}
                         </p>
                       </div>
 
-                      {/* Options */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                          Answer Options (Correct Choice Checked):
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                          {content.options?.map((opt, idx) => (
-                            <OptionItem key={idx} option={opt} isCorrect={opt === content.correctAnswer} />
-                          ))}
+                      {/* Render Model Tolerances if Gesture Training submission */}
+                      {isModelCalibration && content.toleranceBounds ? (
+                        <div className="space-y-2 bg-white p-3.5 rounded-2xl border border-slate-200">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                            Requested Recognition Tolerance Parameters:
+                          </span>
+                          <div className="grid grid-cols-2 gap-2 text-xs font-bold text-slate-700">
+                            <div className="p-2 bg-slate-50 rounded-xl border">Rotate: <span className="text-[#521903] font-mono">{content.toleranceBounds.rotate}%</span></div>
+                            <div className="p-2 bg-slate-50 rounded-xl border">Tilt: <span className="text-[#521903] font-mono">{content.toleranceBounds.tilt}%</span></div>
+                            <div className="p-2 bg-slate-50 rounded-xl border">Distance: <span className="text-[#521903] font-mono">{content.toleranceBounds.distance}%</span></div>
+                            <div className="p-2 bg-slate-50 rounded-xl border">Switch Hands: <span className="text-[#521903] font-mono">{content.toleranceBounds.switchHands}%</span></div>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                            Answer Options:
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {content.options?.map((opt, idx) => (
+                              <OptionItem key={idx} option={opt} isCorrect={opt === content.correctAnswer} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                      {/* Document Details */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 font-bold pt-2 border-t border-slate-100">
                         <p>Submitted by: <span className="text-slate-700">{content.createdByName || 'Faculty Member'}</span></p>
                         <p>Submission Date: <span className="text-slate-700">{formatTimestamp(content.submittedAt || content.createdAt)}</span></p>
-                        {content.activityQuestionId && (
-                          <p className="sm:col-span-2 text-amber-800">
-                            Target Document ID: <span className="font-mono text-slate-600">{content.activityQuestionId}</span>
-                          </p>
-                        )}
                       </div>
 
-                      {/* Rejection Note */}
                       {isRejected && content.rejectionReason && (
                         <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 font-medium">
                           <span className="font-black block uppercase tracking-wider text-[9px] text-rose-600 mb-0.5">
@@ -667,7 +686,6 @@ export default function ContentApprovalPage() {
                       )}
                     </div>
 
-                    {/* Right: Picture Preview Thumbnail */}
                     <SubmissionImagePreview
                       imageUrl={content.imageUrl}
                       correctAnswer={content.correctAnswer}
@@ -675,7 +693,7 @@ export default function ContentApprovalPage() {
                     />
                   </div>
 
-                  {/* Actions Strip */}
+                  {/* Actions Bar */}
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
                     <button
                       onClick={(e) => handleToggleArchive(content.id, isArchived, e)}
@@ -703,10 +721,20 @@ export default function ContentApprovalPage() {
                           <button
                             onClick={(e) => handleApprove(content.id, e)}
                             disabled={isBusy}
-                            className="px-4 py-1.5 bg-[#4CAF50] hover:bg-[#43A047] text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                            className={`px-4 py-1.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center gap-1.5 cursor-pointer disabled:opacity-40 ${
+                              isModelCalibration
+                                ? 'bg-blue-600 hover:bg-blue-700'
+                                : isDeletionRequest
+                                ? 'bg-rose-600 hover:bg-rose-700'
+                                : 'bg-[#4CAF50] hover:bg-[#43A047]'
+                            }`}
                           >
                             {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 stroke-[3]" />}
-                            Approve & Publish
+                            {isModelCalibration
+                              ? 'Approve Parameters & Sync to Mobile App'
+                              : isDeletionRequest
+                              ? 'Approve Deletion & Remove'
+                              : 'Approve & Publish'}
                           </button>
                         </>
                       )}
@@ -736,7 +764,7 @@ export default function ContentApprovalPage() {
                           type="text"
                           value={notesInput}
                           onChange={(e) => setNotesInput(e.target.value)}
-                          placeholder="e.g. Please select clearer hand sign options or verify letter accuracy..."
+                          placeholder="e.g. Rotate or distance boundary is too loose for accurate sign recognition..."
                           className="flex-1 px-3 py-1.5 bg-white text-slate-800 text-xs font-semibold rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-400"
                         />
                         <button

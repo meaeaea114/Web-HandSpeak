@@ -18,13 +18,20 @@ import { db, storage } from '@/lib/firebase';
 export type ContentCategory = 'alphabet' | 'numbers' | 'phrases' | 'civic' | string;
 export type ContentDifficulty = 'easy' | 'medium' | 'hard';
 export type SubmissionStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'archived';
-export type SubmissionActionType = 'create' | 'update' | 'delete';
+export type SubmissionActionType = 'create' | 'update' | 'delete' | 'train_parameters';
 
 export interface ActivityCategory {
   id: string;
   name: string;
   label: string;
   imgUrl?: string;
+}
+
+export interface ToleranceBounds {
+  rotate: number;
+  tilt: number;
+  distance: number;
+  switchHands: number;
 }
 
 export interface ContentSubmission {
@@ -41,6 +48,9 @@ export interface ContentSubmission {
   options: string[];
   imageUrl: string;
   image_url?: string;
+  toleranceBounds?: ToleranceBounds;
+  trainingSequences?: number[][][];
+  gestureKey?: string;
   status: SubmissionStatus;
   isArchived?: boolean;
   archivedAt?: any;
@@ -70,6 +80,9 @@ export interface ContentSubmissionInput {
   correctAnswer: string;
   options: string[];
   imageUrl: string;
+  toleranceBounds?: ToleranceBounds;
+  trainingSequences?: number[][][];
+  gestureKey?: string;
   activityQuestionId?: string;
 }
 
@@ -90,6 +103,33 @@ export interface PublishedActivityQuestion {
   archivedAt?: any;
 }
 
+export interface GestureTrainingData {
+  id: string;
+  gestureKey: string;
+  label: string;
+  category: string;
+  sampleCount: number;
+  accuracyThreshold: number;
+  landmarksVector?: number[];
+  toleranceBounds: ToleranceBounds;
+  lastTrainedAt?: any;
+  lastTrainedBy?: string;
+}
+
+export interface TutorialLesson {
+  id: string;
+  category: string;
+  symbol: string;
+  displayTitle: string;
+  imageUrl: string;
+  gestureKey: string;
+  description?: string;
+  expectedHands?: number;
+  createdAt?: any;
+  createdById?: string;
+  createdByName?: string;
+}
+
 export const CONTENT_CATEGORIES = [
   { value: 'alphabet', label: 'Alphabet', imgUrl: '/images/alphabets.png' },
   { value: 'numbers', label: 'Numbers', imgUrl: '/images/numbers.png' },
@@ -99,7 +139,41 @@ export const CONTENT_CATEGORIES = [
 
 export const CONTENT_DIFFICULTIES: ContentDifficulty[] = ['easy', 'medium', 'hard'];
 
-// 1. Audit / Activity Logging Function
+export const DEFAULT_TUTORIAL_LESSONS: Record<string, TutorialLesson[]> = {
+  alphabet: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((char) => ({
+    id: `alpha_${char.toLowerCase()}`,
+    category: 'alphabet',
+    symbol: char,
+    displayTitle: `${char}${char.toLowerCase()}`,
+    imageUrl: `/assets/pictures/${char}.jpg`,
+    gestureKey: char,
+    description: `FSL Finger spelling sign for letter ${char}`,
+    expectedHands: 1,
+  })),
+  numbers: Array.from({ length: 10 }, (_, i) => i + 1).map((num) => ({
+    id: `num_${num}`,
+    category: 'numbers',
+    symbol: num.toString(),
+    displayTitle: `Number ${num}`,
+    imageUrl: `/assets/pictures/${num}.png`,
+    gestureKey: num.toString(),
+    description: `FSL Counting hand sign representation for number ${num}`,
+    expectedHands: 1,
+  })),
+  phrases: [
+    { id: 'ph_hello', category: 'phrases', symbol: 'Hello', displayTitle: 'Hello / Kamusta', imageUrl: '/assets/pictures/hello.jpg', gestureKey: 'hello', description: 'Greeting sign', expectedHands: 1 },
+    { id: 'ph_thanks', category: 'phrases', symbol: 'Thank You', displayTitle: 'Thank You / Salamat', imageUrl: '/assets/pictures/thankyou.jpg', gestureKey: 'thank_you', description: 'Gratitude gesture', expectedHands: 1 },
+    { id: 'ph_yes', category: 'phrases', symbol: 'Yes', displayTitle: 'Yes / Oo', imageUrl: '/assets/pictures/yes.jpg', gestureKey: 'yes', description: 'Affirmation sign', expectedHands: 1 },
+    { id: 'ph_no', category: 'phrases', symbol: 'No', displayTitle: 'No / Hindi', imageUrl: '/assets/pictures/no.jpg', gestureKey: 'no', description: 'Negation sign', expectedHands: 1 },
+  ],
+  civic: [
+    { id: 'cv_help', category: 'civic', symbol: 'Help', displayTitle: 'Help / Saklolo', imageUrl: '/assets/pictures/help.jpg', gestureKey: 'help', description: 'Emergency sign', expectedHands: 2 },
+    { id: 'cv_police', category: 'civic', symbol: 'Police', displayTitle: 'Police / Pulis', imageUrl: '/assets/pictures/police.jpg', gestureKey: 'police', description: 'Public safety sign', expectedHands: 1 },
+    { id: 'cv_doctor', category: 'civic', symbol: 'Doctor', displayTitle: 'Doctor / Doktor', imageUrl: '/assets/pictures/doctor.jpg', gestureKey: 'doctor', description: 'Healthcare sign', expectedHands: 2 },
+  ],
+};
+
+// 1. Audit / Activity Logging
 export async function logAdminAction(
   adminId: string,
   adminName: string,
@@ -121,16 +195,13 @@ export async function logAdminAction(
     };
 
     await addDoc(collection(db, 'activity_logs'), logData);
-    await addDoc(collection(db, 'login_activity'), {
-      ...logData,
-      type: 'content_management',
-    });
+    await addDoc(collection(db, 'login_activity'), { ...logData, type: 'content_management' });
   } catch (err) {
     console.warn('Could not record activity audit log:', err);
   }
 }
 
-// 2. Dispatch notification document to teacher
+// 2. Dispatch in-app notification to teacher
 export async function sendTeacherNotification(
   teacherId: string,
   teacherEmail: string,
@@ -141,7 +212,7 @@ export async function sendTeacherNotification(
 ) {
   try {
     if (!teacherId && !teacherEmail) return;
-    const notificationPayload = {
+    await addDoc(collection(db, 'notifications'), {
       userId: teacherId || '',
       recipientId: teacherId || '',
       userEmail: teacherEmail || '',
@@ -154,15 +225,64 @@ export async function sendTeacherNotification(
       metadata,
       createdAt: serverTimestamp(),
       timestamp: serverTimestamp(),
-    };
-
-    await addDoc(collection(db, 'notifications'), notificationPayload);
+    });
   } catch (err) {
     console.warn('Could not write notification document:', err);
   }
 }
 
-// 3. Realtime listener for teacher's own submissions
+// 3. Realtime listener for custom tutorial lessons created in Firestore
+export function subscribeToCustomTutorialLessons(
+  category: string,
+  callback: (lessons: TutorialLesson[]) => void
+) {
+  const q = query(
+    collection(db, 'tutorial_lessons'),
+    where('category', '==', category)
+  );
+  return onSnapshot(q, (snapshot) => {
+    const list = snapshot.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as TutorialLesson[];
+    callback(list);
+  });
+}
+
+// 4. Create new Tutorial Lesson / Practice Sign
+export async function createTutorialLesson(
+  category: string,
+  symbol: string,
+  displayTitle: string,
+  description: string,
+  imageUrl: string,
+  userId: string,
+  userName: string,
+  expectedHands = 1
+) {
+  const cleanId = `${category}_${symbol.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  const docRef = doc(db, 'tutorial_lessons', cleanId);
+  await setDoc(
+    docRef,
+    {
+      category,
+      symbol: symbol.trim(),
+      displayTitle: displayTitle.trim() || symbol.trim(),
+      description: description.trim(),
+      imageUrl: imageUrl.trim() || '',
+      gestureKey: symbol.trim(),
+      expectedHands,
+      createdById: userId,
+      createdByName: userName,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return cleanId;
+}
+
+// 5. Realtime listener for teacher submissions
 export function getMyContentSubmissionsRealtime(
   userId: string,
   callback: (submissions: ContentSubmission[]) => void,
@@ -192,7 +312,7 @@ export function getMyContentSubmissionsRealtime(
   );
 }
 
-// 4. Realtime listener for all submissions (Admin)
+// 6. Realtime listener for all submissions (Admin View)
 export function getAllContentSubmissionsRealtime(
   callback: (submissions: ContentSubmission[]) => void,
   errorCallback?: (err: any) => void
@@ -218,7 +338,7 @@ export function getAllContentSubmissionsRealtime(
   );
 }
 
-// 5. Realtime listener for published live activities
+// 7. Realtime listener for live activity questions
 export function subscribeToAllActivities(
   callback: (activities: PublishedActivityQuestion[]) => void,
   errorCallback?: (err: any) => void
@@ -243,7 +363,7 @@ export function subscribeToAllActivities(
   );
 }
 
-// 6. Realtime listener for categories
+// 8. Realtime listener for categories
 export function subscribeToCategories(
   callback: (categories: ActivityCategory[]) => void,
   errorCallback?: (err: any) => void
@@ -262,7 +382,64 @@ export function subscribeToCategories(
   );
 }
 
-// 7. Create dynamic category
+// 9. Realtime listener for Gesture Training Data
+export function subscribeToGestureTrainingData(
+  category: string,
+  callback: (data: GestureTrainingData[]) => void
+) {
+  const q = query(
+    collection(db, 'gesture_training_data'),
+    where('category', '==', category)
+  );
+  return onSnapshot(q, (snapshot) => {
+    const list = snapshot.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as GestureTrainingData[];
+    callback(list);
+  });
+}
+
+// 10. Submit Gesture Model Parameters to Admin for Approval (Persisting raw sequences for offline LSTM training)
+export async function submitGestureParametersForApproval(
+  gestureKey: string,
+  category: string,
+  displayTitle: string,
+  imageUrl: string,
+  toleranceBounds: ToleranceBounds,
+  userId: string,
+  userName: string,
+  userEmail = '',
+  trainingSequences?: number[][][]
+) {
+  return await addDoc(collection(db, 'content_submissions'), {
+    category,
+    difficulty: 'medium',
+    type: 'gesture_model_training',
+    submissionType: 'train_parameters',
+    level: `${category}_training_${gestureKey.toLowerCase()}`,
+    questionText: `Calibrate Model: ${displayTitle} (${gestureKey.toUpperCase()})`,
+    question_text: `Calibrate Model: ${displayTitle} (${gestureKey.toUpperCase()})`,
+    correctAnswer: gestureKey,
+    correct_answer: gestureKey,
+    options: ['Rotate', 'Tilt', 'Distance', 'Switch Hands'],
+    imageUrl,
+    image_url: imageUrl,
+    gestureKey,
+    toleranceBounds,
+    trainingSequences: trainingSequences ?? [],
+    status: 'pending',
+    isArchived: false,
+    createdById: userId,
+    createdByName: userName,
+    createdByEmail: userEmail,
+    createdAt: serverTimestamp(),
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+// 11. Create dynamic category
 export async function createCategory(name: string, label: string, imgUrl = '') {
   const slug = name.toLowerCase().trim().replace(/\s+/g, '_');
   const catRef = doc(db, 'activity_categories', slug);
@@ -274,7 +451,7 @@ export async function createCategory(name: string, label: string, imgUrl = '') {
   });
 }
 
-// 8. Submit content question for Admin Approval ONLY
+// 12. Submit Activity Quiz for Admin Approval
 export async function createContentSubmission(
   input: ContentSubmissionInput,
   userId: string,
@@ -310,7 +487,7 @@ export async function createContentSubmission(
   });
 }
 
-// 9. Request Deletion from Admin Approval
+// 13. Request Activity Deletion from Admin Approval
 export async function requestActivityDeletion(
   activity: PublishedActivityQuestion,
   userId: string,
@@ -348,7 +525,7 @@ export async function requestActivityDeletion(
   });
 }
 
-// 10. Update submission
+// 14. Update submission
 export async function updateContentSubmission(
   id: string,
   input: ContentSubmissionInput,
@@ -377,7 +554,7 @@ export async function updateContentSubmission(
   });
 }
 
-// 11. APPROVE (Admin) - Handles Create, Update, and Deletion
+// 15. Approve Submission (Admin)
 export async function approveContentSubmission(
   submissionId: string,
   adminId: string,
@@ -391,15 +568,39 @@ export async function approveContentSubmission(
   const sub = subSnap.data() as ContentSubmission;
   const level = sub.level || sub.publishedLevel || `${sub.category}_${sub.difficulty}_1`;
   const isDeletion = sub.submissionType === 'delete';
+  const isTrainingSync = sub.submissionType === 'train_parameters';
 
   let targetQuestionId = sub.activityQuestionId;
 
-  if (isDeletion && targetQuestionId) {
-    // Delete from live activity_questions
+  if (isTrainingSync) {
+    const gestureKey = sub.gestureKey || sub.correctAnswer || 'gesture';
+    const gestureDocId = `${sub.category}_${gestureKey.toLowerCase()}`;
+    const gestureDocRef = doc(db, 'gesture_training_data', gestureDocId);
+
+    const existingSnap = await getDoc(gestureDocRef);
+    const prevSamples = existingSnap.exists() ? existingSnap.data().sampleCount || 0 : 0;
+
+    await setDoc(
+      gestureDocRef,
+      {
+        gestureKey,
+        category: sub.category,
+        label: sub.questionText.replace('Calibrate Model: ', ''),
+        sampleCount: prevSamples + (sub.trainingSequences?.length || 1),
+        accuracyThreshold: 85,
+        toleranceBounds: sub.toleranceBounds || { rotate: 85, tilt: 75, distance: 60, switchHands: 50 },
+        lastTrainedAt: serverTimestamp(),
+        lastTrainedBy: sub.createdByName || 'Faculty Member',
+        approvedBy: adminName,
+        approvedAt: serverTimestamp(),
+        status: 'active',
+      },
+      { merge: true }
+    );
+  } else if (isDeletion && targetQuestionId) {
     const questionRef = doc(db, 'activity_questions', targetQuestionId);
     await deleteDoc(questionRef);
   } else {
-    // Create or Update in live activity_questions
     const questionPayload = {
       category: sub.category,
       level,
@@ -423,38 +624,46 @@ export async function approveContentSubmission(
     }
   }
 
-  // Mark submission as approved
   await updateDoc(subRef, {
     status: 'approved',
     reviewedById: adminId,
     reviewedByName: adminName,
     reviewedAt: serverTimestamp(),
     publishedLevel: level,
-    activityQuestionId: targetQuestionId,
+    activityQuestionId: targetQuestionId || null,
   });
 
-  // Audit log
-  await logAdminAction(adminId, adminName, adminEmail, isDeletion ? 'APPROVE_ACTIVITY_DELETION' : 'APPROVE_ACTIVITY', {
-    submissionId,
-    targetQuestionId,
-    category: sub.category,
-    questionText: sub.questionText,
-  });
+  await logAdminAction(
+    adminId,
+    adminName,
+    adminEmail,
+    isTrainingSync ? 'APPROVE_GESTURE_PARAMETERS' : isDeletion ? 'APPROVE_ACTIVITY_DELETION' : 'APPROVE_ACTIVITY',
+    {
+      submissionId,
+      category: sub.category,
+      questionText: sub.questionText,
+    }
+  );
 
-  // Notification to Teacher
   await sendTeacherNotification(
     sub.createdById,
     sub.createdByEmail || '',
-    isDeletion ? 'Activity Deletion Approved 🗑️' : 'Activity Question Approved 🎉',
-    isDeletion
-      ? `Your deletion request for "${sub.questionText || 'Activity'}" has been approved and removed from the mobile app.`
-      : `Your question "${sub.questionText || 'Activity'}" (${sub.category.toUpperCase()}) has been approved by ${adminName} and is now live in the mobile app.`,
+    isTrainingSync
+      ? 'Gesture Training Calibration Approved 🦾'
+      : isDeletion
+      ? 'Activity Deletion Approved 🗑️'
+      : 'Activity Question Approved 🎉',
+    isTrainingSync
+      ? `Your gesture parameter calibration for "${sub.questionText}" has been approved by ${adminName} and synced live to the mobile app.`
+      : isDeletion
+      ? `Your deletion request for "${sub.questionText}" has been approved and removed from the mobile app.`
+      : `Your question "${sub.questionText}" (${sub.category.toUpperCase()}) has been approved by ${adminName} and is now live in the mobile app.`,
     'approval',
     { submissionId, activityQuestionId: targetQuestionId }
   );
 }
 
-// 12. REJECT (Admin)
+// 16. Reject Submission (Admin)
 export async function rejectContentSubmission(
   submissionId: string,
   adminId: string,
@@ -467,7 +676,6 @@ export async function rejectContentSubmission(
   if (!subSnap.exists()) throw new Error('Submission document not found.');
 
   const sub = subSnap.data() as ContentSubmission;
-  const isDeletion = sub.submissionType === 'delete';
 
   await updateDoc(subRef, {
     status: 'rejected',
@@ -477,24 +685,19 @@ export async function rejectContentSubmission(
     reviewedAt: serverTimestamp(),
   });
 
-  await logAdminAction(adminId, adminName, adminEmail, isDeletion ? 'REJECT_ACTIVITY_DELETION' : 'REJECT_ACTIVITY', {
-    submissionId,
-    reason,
-  });
+  await logAdminAction(adminId, adminName, adminEmail, 'REJECT_SUBMISSION', { submissionId, reason });
 
   await sendTeacherNotification(
     sub.createdById,
     sub.createdByEmail || '',
-    isDeletion ? 'Activity Deletion Request Rejected ⚠️' : 'Activity Submission Needs Revision ⚠️',
-    isDeletion
-      ? `Your request to delete question "${sub.questionText || 'Activity'}" was rejected: "${reason}". The question will remain active in the app.`
-      : `Your question "${sub.questionText || 'Activity'}" was rejected with feedback: "${reason}". Please edit and resubmit.`,
+    'Activity Submission Needs Revision ⚠️',
+    `Your submission "${sub.questionText}" was rejected with feedback: "${reason}". Please edit and resubmit.`,
     'rejection',
     { submissionId, reason }
   );
 }
 
-// 13. ARCHIVE / UNARCHIVE Submission
+// 17. Archive / Unarchive Submission
 export async function setSubmissionArchivedStatus(
   submissionId: string,
   isArchived: boolean,
@@ -515,7 +718,7 @@ export async function setSubmissionArchivedStatus(
   });
 }
 
-// 14. Delete Submission
+// 18. Delete Submission
 export async function deleteContentSubmission(
   id: string,
   adminId = '',
@@ -528,7 +731,7 @@ export async function deleteContentSubmission(
   }
 }
 
-// 15. Delete Live Activity directly (Admin only)
+// 19. Delete Live Activity
 export async function deleteActivityQuestion(
   id: string,
   adminId = '',
@@ -541,7 +744,7 @@ export async function deleteActivityQuestion(
   }
 }
 
-// 16. Fetch published questions snapshot
+// 20. Fetch published questions snapshot
 export async function getPublishedActivityQuestions(): Promise<PublishedActivityQuestion[]> {
   const q = query(collection(db, 'activity_questions'));
   const snapshot = await getDocs(q);
@@ -557,7 +760,7 @@ export async function getPublishedActivityQuestions(): Promise<PublishedActivity
   });
 }
 
-// 17. Safe Upload
+// 21. Upload Activity Image
 export async function uploadActivityImage(file: File): Promise<string> {
   return new Promise((resolve) => {
     const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');

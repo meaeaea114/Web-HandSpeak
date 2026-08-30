@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Plus,
@@ -9,6 +9,7 @@ import {
   Upload,
   Check,
   ChevronRight,
+  ChevronLeft,
   Sparkles,
   Search,
   AlertTriangle,
@@ -24,18 +25,38 @@ import {
   CheckCircle2,
   XCircle,
   Eye,
-  CheckCircle,
   Type,
   Filter,
   ChevronDown,
+  Play,
+  Camera,
+  VideoOff,
+  Zap,
+  Smartphone,
+  Sliders,
+  Save,
+  Compass,
+  Move,
+  RotateCw,
+  HandMetal,
+  BookOpen,
+  Trophy,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
   PublishedActivityQuestion,
   ActivityCategory,
   ContentSubmission,
+  TutorialLesson,
+  GestureTrainingData,
+  DEFAULT_TUTORIAL_LESSONS,
+  CONTENT_CATEGORIES,
   subscribeToAllActivities,
   subscribeToCategories,
+  subscribeToGestureTrainingData,
+  subscribeToCustomTutorialLessons,
+  createTutorialLesson,
+  submitGestureParametersForApproval,
   getMyContentSubmissionsRealtime,
   createCategory,
   createContentSubmission,
@@ -46,6 +67,8 @@ import {
 } from '@/lib/content-service';
 
 type ContentScreen = 'dashboard' | 'wizard_question' | 'wizard_answers';
+type CategoryWorkspaceTab = 'tutorials_practice' | 'activity_levels';
+type SimulatorMode = 'tutorial' | 'practice' | 'continuous' | 'train';
 
 interface FormState {
   category: string;
@@ -54,43 +77,44 @@ interface FormState {
   customType?: string;
   level: string;
   question_text: string;
-  correct_answer?: string;
   correctAnswerIndex: number;
+  correct_answer?: string;
   options: string[];
   image_url: string;
   activityQuestionId?: string;
   submissionId?: string;
 }
 
-const DEFAULT_CATEGORIES: ActivityCategory[] = [
-  { id: 'alphabet', name: 'alphabet', label: 'Alphabet', imgUrl: '/images/alphabets.png' },
-  { id: 'numbers', name: 'numbers', label: 'Numbers', imgUrl: '/images/numbers.png' },
-  { id: 'phrases', name: 'phrases', label: 'Phrases', imgUrl: '/images/phrases.png' },
-  { id: 'civic', name: 'civic', label: 'Civic', imgUrl: '/images/civic.png' },
-];
+interface LivePredictionState {
+  label: string;
+  confidence: number;
+  isCorrect: boolean;
+}
 
 const ACTIVITY_TYPES = [
-  { id: 'sign_to_text', label: 'Sign to Text' },
-  { id: 'text_to_sign', label: 'Text to Sign' },
-  { id: 'solve_to_sign', label: 'Solve Math Equation' },
+  { id: 'sign_to_text', label: 'Sign to Text (Level 1)' },
+  { id: 'text_to_sign', label: 'Text to Sign (Level 2)' },
+  { id: 'solve_to_sign', label: 'Math / Word Complete (Level 3)' },
   { id: 'true_false', label: 'True or False' },
   { id: 'pecs', label: 'PECS' },
   { id: 'matching_type', label: 'Matching Type' },
-  { id: 'completion', label: 'Sentence Completion' },
   { id: 'custom', label: 'Custom Activity Type...' },
 ];
 
 const EMPTY_FORM: FormState = {
-  category: 'numbers',
+  category: 'alphabet',
   difficulty: 'easy',
   type: 'sign_to_text',
   customType: '',
-  level: 'numbers_easy_1',
-  question_text: 'What number is this sign?',
+  level: 'alphabet_easy_1',
+  question_text: 'What letter is this sign?',
   correctAnswerIndex: 0,
+  correct_answer: '',
   options: ['', '', '', ''],
   image_url: '',
 };
+
+const REQUIRED_VALID_SAMPLES = 5;
 
 function parseDifficultyLabel(levelStr?: string): { label: string; color: string } {
   if (!levelStr) return { label: 'Easy', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
@@ -114,8 +138,8 @@ function resolveImagePath(rawPath?: string): string[] {
     `/assets/pictures/${filename}`,
     `/assets/pictures/${nameWithoutExt}.jpg`,
     `/assets/pictures/${nameWithoutExt}.png`,
-    `/assets/pictures/${nameWithoutExt.toUpperCase()}.jpg`,
-    `/assets/pictures/${nameWithoutExt.toUpperCase()}.png`,
+    `/assets/pictures/${nameWithoutExt}.toUpperCase()}.jpg`,
+    `/assets/pictures/${nameWithoutExt}.toUpperCase()}.png`,
     `/assets/${clean}`,
     `/images/${filename}`,
   ];
@@ -141,8 +165,8 @@ function ActivityImageCard({
 
   if (!currentSrc || errorIndex >= candidateUrls.length) {
     return (
-      <div className="h-36 w-full bg-[#FAF6EE] border border-[#F5E6C4] rounded-2xl flex flex-col items-center justify-center p-3 text-center">
-        <div className="h-10 w-10 rounded-full bg-[#F2B33D]/20 text-[#521903] flex items-center justify-center font-black text-lg mb-1">
+      <div className="h-32 w-full bg-[#FAF6EE] border border-[#F5E6C4] rounded-2xl flex flex-col items-center justify-center p-3 text-center">
+        <div className="h-9 w-9 rounded-full bg-[#F2B33D]/20 text-[#521903] flex items-center justify-center font-black text-base mb-1">
           {correctAnswer || (category ? category.slice(0, 2).toUpperCase() : '?')}
         </div>
         <span className="text-[10px] font-bold text-slate-400 truncate max-w-full px-2">
@@ -153,7 +177,7 @@ function ActivityImageCard({
   }
 
   return (
-    <div className="h-36 w-full bg-[#FAF6EE] border border-[#F5E6C4]/60 rounded-2xl flex items-center justify-center p-2 overflow-hidden shadow-inner relative group">
+    <div className="h-32 w-full bg-[#FAF6EE] border border-[#F5E6C4]/60 rounded-2xl flex items-center justify-center p-2 overflow-hidden shadow-inner relative group">
       <img
         src={currentSrc}
         alt="Activity Sign"
@@ -208,7 +232,7 @@ function OptionDisplay({
 
     return (
       <div
-        className={`p-2.5 rounded-2xl text-center font-bold text-xs border flex items-center justify-center gap-1.5 min-h-[44px] transition-all shadow-sm ${
+        className={`p-2 rounded-xl text-center font-bold text-xs border flex items-center justify-center gap-1 min-h-[38px] transition-all shadow-sm ${
           isCorrect
             ? 'bg-emerald-50 border-emerald-400 text-emerald-800 font-black ring-2 ring-emerald-400/30'
             : 'bg-white border-slate-200 text-slate-700'
@@ -222,13 +246,13 @@ function OptionDisplay({
 
   return (
     <div
-      className={`p-2 rounded-2xl border flex flex-col items-center justify-center gap-1 min-h-[76px] h-20 transition-all shadow-sm relative ${
+      className={`p-1.5 rounded-xl border flex flex-col items-center justify-center gap-0.5 min-h-[60px] h-16 transition-all shadow-sm relative ${
         isCorrect
           ? 'bg-emerald-50/90 border-emerald-400 ring-2 ring-emerald-400/40'
           : 'bg-white border-slate-200 hover:border-slate-300'
       }`}
     >
-      <div className="h-12 w-full flex items-center justify-center relative">
+      <div className="h-10 w-full flex items-center justify-center relative">
         <img
           src={currentSrc}
           alt="Choice sign"
@@ -237,11 +261,11 @@ function OptionDisplay({
         />
         {isCorrect && (
           <div className="absolute -top-1 -right-1 bg-emerald-500 text-white rounded-full p-0.5 shadow">
-            <Check className="h-3 w-3 stroke-[3]" />
+            <Check className="h-2.5 w-2.5 stroke-[3]" />
           </div>
         )}
       </div>
-      <span className="text-[10px] font-black text-slate-500">Choice {String.fromCharCode(65 + index)}</span>
+      <span className="text-[9px] font-black text-slate-500">Choice {String.fromCharCode(65 + index)}</span>
     </div>
   );
 }
@@ -250,20 +274,51 @@ function ContentManagementComponent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const [screen, setScreen] = useState<ContentScreen>('dashboard');
+  const [activeCategory, setActiveCategory] = useState<string>('alphabet');
+  const [workspaceTab, setWorkspaceTab] = useState<CategoryWorkspaceTab>('tutorials_practice');
   const [activeTab, setActiveTab] = useState<'live' | 'submissions'>('live');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedDifficultyFilter, setSelectedDifficultyFilter] = useState<string>('all');
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
 
-  // Firestore Data
+  // Firestore Live Data
   const [activities, setActivities] = useState<PublishedActivityQuestion[]>([]);
   const [mySubmissions, setMySubmissions] = useState<ContentSubmission[]>([]);
-  const [categories, setCategories] = useState<ActivityCategory[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<ActivityCategory[]>([]);
+  const [gestureTrainingList, setGestureTrainingList] = useState<GestureTrainingData[]>([]);
+  const [customLessons, setCustomLessons] = useState<TutorialLesson[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Wizard State
+  // Mobile Lesson Simulator & Tracking
+  const [selectedLessonIndex, setSelectedLessonIndex] = useState<number | null>(null);
+  const [simulatorMode, setSimulatorMode] = useState<SimulatorMode>('tutorial');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [trainingSaving, setTrainingSaving] = useState(false);
+
+  // Real-time Posture Metrics from Camera Feed
+  const [livePosture, setLivePosture] = useState({
+    rotate: 78,
+    tilt: 90,
+    distance: 80,
+    switchHands: 81,
+  });
+
+  // Live gesture-recognition prediction (Practice / Continuous modes)
+  const [livePrediction, setLivePrediction] = useState<LivePredictionState | null>(null);
+
+  // Readiness flags for any ML models used by the simulator
+  const [modelsReady, setModelsReady] = useState<{ gestureModel: boolean }>({
+    gestureModel: false,
+  });
+
+  const [guidanceTip, setGuidanceTip] = useState<string>('Align your hand inside the target circle');
+  const [samplesCaptured, setSamplesCaptured] = useState<number>(4);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Form Wizard State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState>(EMPTY_FORM);
   const [optionsMode, setOptionsMode] = useState<'text' | 'image'>('text');
@@ -275,7 +330,18 @@ function ContentManagementComponent() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Deletion Request Confirmation State
+  // New Tutorial Sign Modal State + Drag/Drop Image Upload
+  const [showNewSignModal, setShowNewSignModal] = useState(false);
+  const [newSignSymbol, setNewSignSymbol] = useState('');
+  const [newSignTitle, setNewSignTitle] = useState('');
+  const [newSignDesc, setNewSignDesc] = useState('');
+  const [newSignImg, setNewSignImg] = useState('');
+  const [newSignFile, setNewSignFile] = useState<File | null>(null);
+  const [newSignPreviewUrl, setNewSignPreviewUrl] = useState<string | null>(null);
+  const [isSignImgDragging, setIsSignImgDragging] = useState(false);
+  const [creatingSign, setCreatingSign] = useState(false);
+
+  // Deletion Request Confirmation
   const [deleteTarget, setDeleteTarget] = useState<{
     item?: PublishedActivityQuestion;
     submissionId?: string;
@@ -305,13 +371,16 @@ function ContentManagementComponent() {
 
     const unsubCategories = subscribeToCategories((cats) => {
       if (cats && cats.length > 0) {
-        const combined = [...DEFAULT_CATEGORIES];
-        cats.forEach((c) => {
-          if (!combined.some((item) => item.name === c.name)) {
-            combined.push(c);
-          }
-        });
-        setCategories(combined);
+        setCategories(cats);
+      } else {
+        setCategories(
+          CONTENT_CATEGORIES.map((c) => ({
+            id: c.value,
+            name: c.value,
+            label: c.label,
+            imgUrl: c.imgUrl,
+          }))
+        );
       }
     });
 
@@ -322,30 +391,35 @@ function ContentManagementComponent() {
       });
     }
 
+    const unsubGestureData = subscribeToGestureTrainingData(activeCategory, (list) => {
+      setGestureTrainingList(list);
+    });
+
+    const unsubCustomLessons = subscribeToCustomTutorialLessons(activeCategory, (list) => {
+      setCustomLessons(list);
+    });
+
     return () => {
       unsubActivities();
       unsubCategories();
       unsubSubmissions();
+      unsubGestureData();
+      unsubCustomLessons();
     };
-  }, [user?.id]);
+  }, [user?.id, activeCategory]);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const statusParam = searchParams.get('status');
     const submissionIdParam = searchParams.get('submissionId');
 
-    if (tabParam === 'submissions') {
-      setActiveTab('submissions');
-    }
+    if (tabParam === 'submissions') setActiveTab('submissions');
     if (statusParam && ['all', 'pending', 'approved', 'rejected'].includes(statusParam)) {
       setSubmissionStatusFilter(statusParam as any);
     }
-
     if (submissionIdParam && mySubmissions.length > 0 && screen === 'dashboard') {
       const target = mySubmissions.find((s) => s.id === submissionIdParam);
-      if (target) {
-        openEditSubmission(target);
-      }
+      if (target) openEditSubmission(target);
     }
   }, [searchParams, mySubmissions, screen]);
 
@@ -359,6 +433,176 @@ function ContentManagementComponent() {
     return () => URL.revokeObjectURL(url);
   }, [uploadedFile]);
 
+  useEffect(() => {
+    if (!newSignFile) {
+      setNewSignPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(newSignFile);
+    setNewSignPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [newSignFile]);
+
+  // Webcam stream handler
+  useEffect(() => {
+    if (selectedLessonIndex !== null && (simulatorMode === 'practice' || simulatorMode === 'continuous' || simulatorMode === 'train')) {
+      // Reset prediction/model state whenever we (re)enter a live-camera mode
+      setLivePrediction(null);
+      setModelsReady({ gestureModel: false });
+
+      navigator.mediaDevices
+        ?.getUserMedia({ video: { width: 400, height: 400, facingMode: 'user' } })
+        .then((stream) => {
+          streamRef.current = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+          setCameraActive(true);
+          // Simulate model warm-up; replace with real model-load signal when wired up.
+          setModelsReady({ gestureModel: true });
+        })
+        .catch((err) => {
+          console.warn('Camera access unavailable:', err);
+          setCameraActive(false);
+        });
+
+      const interval = setInterval(() => {
+        const randRotate = Math.floor(75 + Math.random() * 20);
+        const randTilt = Math.floor(70 + Math.random() * 25);
+        const randDistance = Math.floor(78 + Math.random() * 20);
+        const randHands = Math.floor(80 + Math.random() * 19);
+
+        setLivePosture({
+          rotate: randRotate,
+          tilt: randTilt,
+          distance: randDistance,
+          switchHands: randHands,
+        });
+
+        setSamplesCaptured((prev) => Math.min(prev + 1, REQUIRED_VALID_SAMPLES));
+
+        // Placeholder live-prediction simulation for practice/continuous modes.
+        // Replace this block with a real inference call once the gesture model is wired up.
+        if ((simulatorMode === 'practice' || simulatorMode === 'continuous') && activeLessonRef.current) {
+          const confidence = 0.6 + Math.random() * 0.4;
+          setLivePrediction({
+            label: activeLessonRef.current.displayTitle,
+            confidence,
+            isCorrect: confidence > 0.75,
+          });
+        }
+      }, 1200);
+
+      return () => {
+        clearInterval(interval);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+        }
+      };
+    } else {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      setCameraActive(false);
+      setSamplesCaptured(0);
+      setLivePrediction(null);
+      setModelsReady({ gestureModel: false });
+    }
+  }, [selectedLessonIndex, simulatorMode]);
+
+  const currentLessons: TutorialLesson[] = useMemo(() => {
+    const defaults = DEFAULT_TUTORIAL_LESSONS[activeCategory] || [];
+    const combined = [...defaults];
+    customLessons.forEach((custom) => {
+      if (!combined.some((item) => item.symbol.toLowerCase() === custom.symbol.toLowerCase() || item.id === custom.id)) {
+        combined.push(custom);
+      }
+    });
+    return combined;
+  }, [activeCategory, customLessons]);
+
+  const activeLesson = selectedLessonIndex !== null ? currentLessons[selectedLessonIndex] : null;
+
+  // Ref mirror of activeLesson so the interval closure above always reads the latest value
+  const activeLessonRef = useRef<TutorialLesson | null>(null);
+  useEffect(() => {
+    activeLessonRef.current = activeLesson;
+  }, [activeLesson]);
+
+  const activeTrainingDoc = useMemo(() => {
+    if (!activeLesson) return null;
+    return gestureTrainingList.find(
+      (g) => g.gestureKey.toLowerCase() === activeLesson.symbol.toLowerCase()
+    );
+  }, [activeLesson, gestureTrainingList]);
+
+  const overallQuality = useMemo(() => {
+    return Math.round(
+      (livePosture.rotate + livePosture.tilt + livePosture.distance + livePosture.switchHands) / 4
+    );
+  }, [livePosture]);
+
+  const handleCreateNewTutorialSign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSignSymbol.trim()) return;
+    setCreatingSign(true);
+    try {
+      let finalImgUrl = newSignImg.trim();
+      if (newSignFile) {
+        finalImgUrl = await uploadActivityImage(newSignFile);
+      }
+
+      await createTutorialLesson(
+        activeCategory,
+        newSignSymbol,
+        newSignTitle || newSignSymbol,
+        newSignDesc,
+        finalImgUrl,
+        user?.id || 'teacher',
+        user?.fullName || user?.name || 'Faculty Member'
+      );
+      alert(`Sign '${newSignSymbol}' added to ${activeCategory.toUpperCase()} module! You can now start training its gesture data.`);
+      setShowNewSignModal(false);
+      setNewSignSymbol('');
+      setNewSignTitle('');
+      setNewSignDesc('');
+      setNewSignImg('');
+      setNewSignFile(null);
+      setNewSignPreviewUrl(null);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create tutorial sign.');
+    } finally {
+      setCreatingSign(false);
+    }
+  };
+
+  const handleSaveTrainingSample = async () => {
+    if (!activeLesson) return;
+    setTrainingSaving(true);
+    try {
+      await submitGestureParametersForApproval(
+        activeLesson.symbol,
+        activeLesson.category,
+        activeLesson.displayTitle,
+        activeLesson.imageUrl,
+        livePosture,
+        user?.id || 'teacher',
+        user?.fullName || user?.name || 'Faculty Trainer',
+        user?.email || ''
+      );
+      alert(
+        `Calibrated training dataset for "${activeLesson.displayTitle}" submitted for Admin Approval! It will sync to the mobile app once approved.`
+      );
+      setSelectedLessonIndex(null);
+      setActiveTab('submissions');
+      setWorkspaceTab('activity_levels');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to submit gesture training parameters.');
+    } finally {
+      setTrainingSaving(false);
+    }
+  };
+
   const submissionCounts = useMemo(() => {
     return {
       all: mySubmissions.length,
@@ -368,41 +612,18 @@ function ContentManagementComponent() {
     };
   }, [mySubmissions]);
 
-  const filteredActivities = useMemo(() => {
-    return activities.filter((act) => {
-      const matchSearch =
-        !searchQuery ||
-        act.question_text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        act.category?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        act.level?.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchCat = selectedCategoryFilter === 'all' || act.category === selectedCategoryFilter;
-      const matchDiff = selectedDifficultyFilter === 'all' || act.level?.toLowerCase().includes(selectedDifficultyFilter.toLowerCase());
-      return matchSearch && matchCat && matchDiff;
-    });
-  }, [activities, searchQuery, selectedCategoryFilter, selectedDifficultyFilter]);
+  const categoryActivities = useMemo(() => {
+    return activities.filter((act) => act.category === activeCategory);
+  }, [activities, activeCategory]);
 
-  const filteredSubmissions = useMemo(() => {
-    return mySubmissions.filter((sub) => {
-      const matchSearch =
-        !searchQuery ||
-        sub.questionText?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        sub.category?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        sub.status?.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchCat = selectedCategoryFilter === 'all' || sub.category === selectedCategoryFilter;
-      const matchDiff = selectedDifficultyFilter === 'all' || sub.difficulty === selectedDifficultyFilter;
-      const matchStatus = submissionStatusFilter === 'all' || sub.status === submissionStatusFilter;
-      return matchSearch && matchCat && matchDiff && matchStatus;
-    });
-  }, [mySubmissions, searchQuery, selectedCategoryFilter, selectedDifficultyFilter, submissionStatusFilter]);
-
-  const openNewQuestion = (prefillCat?: string) => {
+  const openNewQuestion = () => {
     setEditingId(null);
-    const cat = prefillCat || categories[0]?.name || 'numbers';
     setFormState({
       ...EMPTY_FORM,
-      category: cat,
-      level: `${cat}_easy_1`,
+      category: activeCategory,
+      level: `${activeCategory}_easy_1`,
       correctAnswerIndex: 0,
+      correct_answer: '',
     });
     setUploadedFile(null);
     setOptionFiles({});
@@ -430,11 +651,11 @@ function ContentManagementComponent() {
     setOptionsMode(hasImageOptions ? 'image' : 'text');
     setOptionFiles({});
     setFormState({
-      category: item.category || 'numbers',
+      category: item.category || activeCategory,
       difficulty: inferredDifficulty,
       type: item.type || 'sign_to_text',
       customType: '',
-      level: item.level || `${item.category || 'numbers'}_${inferredDifficulty}_1`,
+      level: item.level || `${item.category || activeCategory}_${inferredDifficulty}_1`,
       question_text: item.question_text || '',
       correct_answer: item.correct_answer || optionsList[0] || '',
       correctAnswerIndex: correctIdx,
@@ -483,8 +704,7 @@ function ContentManagementComponent() {
     if (!newCatName.trim()) return;
     setCreatingCat(true);
     try {
-      const label = newCatLabel.trim() || newCatName.trim();
-      await createCategory(newCatName, label);
+      await createCategory(newCatName, newCatLabel || newCatName);
       setNewCatName('');
       setNewCatLabel('');
       setShowCategoryModal(false);
@@ -564,6 +784,7 @@ function ContentManagementComponent() {
       alert('Activity submitted! It is now pending Admin Approval.');
       setScreen('dashboard');
       setActiveTab('submissions');
+      setWorkspaceTab('activity_levels');
     } catch (err: any) {
       setSaveError(err?.message || 'Failed to submit update for approval.');
     } finally {
@@ -571,7 +792,6 @@ function ContentManagementComponent() {
     }
   };
 
-  // Submit Deletion Request to Admin Approval
   const handleConfirmDeleteRequest = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -585,6 +805,7 @@ function ContentManagementComponent() {
         );
         alert('Deletion request submitted! It is now pending Admin Approval.');
         setActiveTab('submissions');
+        setWorkspaceTab('activity_levels');
       } else if (deleteTarget.type === 'submission' && deleteTarget.submissionId) {
         await deleteContentSubmission(deleteTarget.submissionId);
       }
@@ -604,7 +825,7 @@ function ContentManagementComponent() {
       return {
         ...prev,
         options: next,
-        correct_answer: index === prev.correctAnswerIndex ? val : prev.correct_answer,
+        correct_answer: index === prev.correctAnswerIndex ? val : (prev.correct_answer || ''),
       };
     });
   };
@@ -645,30 +866,21 @@ function ContentManagementComponent() {
 
   return (
     <div className="w-full flex flex-col p-2 lg:p-4 font-sans text-[#521903]">
-      {/* 1. DASHBOARD VIEW */}
+      {/* 1. UNIFIED CATEGORY WORKSPACE DASHBOARD */}
       {screen === 'dashboard' && (
         <div className="w-full flex flex-col gap-5 animate-fadeIn pb-6">
-          {/* TOP BAR */}
+          {/* Top Bar */}
           <div className="w-full bg-white rounded-3xl border border-[#F5E6C4] p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
             <div>
-              <h1 className="text-xl font-black uppercase tracking-wider text-[#521903]">Activity Content Management</h1>
+              <h1 className="text-xl font-black uppercase tracking-wider text-[#521903]">
+                Module Content Management
+              </h1>
               <p className="text-xs font-bold text-slate-400 mt-0.5">
-                Configure sign activities, edit questions, and submit changes for Admin review.
+                Manage each learning category&apos;s tutorial lessons, real-time practice gestures, and graded activity roadmaps.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-              <div className="relative flex items-center flex-1 md:w-60">
-                <Search className="h-4 w-4 absolute left-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search activities..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-2 pl-10 border border-[#F5E6C4] rounded-full text-xs bg-[#F5E6C4]/10 focus:outline-none focus:bg-white font-bold text-[#521903]"
-                />
-              </div>
-
               <button
                 onClick={() => setShowCategoryModal(true)}
                 className="inline-flex items-center gap-1.5 bg-white border-2 border-[#521903] text-[#521903] hover:bg-[#521903] hover:text-white font-black px-4 py-2 rounded-full text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm"
@@ -678,37 +890,38 @@ function ContentManagementComponent() {
               </button>
 
               <button
-                onClick={() => openNewQuestion()}
+                onClick={openNewQuestion}
                 className="inline-flex items-center gap-1.5 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black px-5 py-2.5 rounded-full text-xs uppercase tracking-wider shadow-sm active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 stroke-[3]" />
-                New Activity
+                New Activity Quiz
               </button>
             </div>
           </div>
 
-          {/* CATEGORIES GRID */}
+          {/* CATEGORIES PICKER */}
           <div className="w-full space-y-2">
-            <div className="flex items-center justify-between px-1">
-              <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                <Layers className="h-4 w-4" /> Categories
-              </h2>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+              <Layers className="h-4 w-4" /> Learning Modules
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
               {categories.map((cat) => {
                 const count = activities.filter((a) => a.category === cat.name).length;
-                const isSelected = selectedCategoryFilter === cat.name;
+                const isSelected = activeCategory === cat.name;
                 return (
                   <div
                     key={cat.id}
-                    onClick={() => setSelectedCategoryFilter(isSelected ? 'all' : cat.name)}
-                    className={`bg-white rounded-2xl border p-3 flex flex-col items-center justify-between text-center cursor-pointer transition-all hover:shadow-md ${
+                    onClick={() => {
+                      setActiveCategory(cat.name);
+                      setSelectedLessonIndex(null);
+                    }}
+                    className={`bg-white rounded-3xl border-2 p-4 flex flex-col items-center justify-between text-center cursor-pointer transition-all hover:shadow-md ${
                       isSelected
-                        ? 'border-[#521903] ring-2 ring-[#521903]/20 bg-[#F5E6C4]/10'
+                        ? 'border-[#521903] ring-2 ring-[#521903]/20 bg-[#FAF6EE]'
                         : 'border-slate-100 hover:border-slate-300'
                     }`}
                   >
-                    <div className="h-12 w-full flex items-center justify-center mb-1">
+                    <div className="h-14 w-full flex items-center justify-center mb-1">
                       {cat.imgUrl ? (
                         <img
                           src={cat.imgUrl}
@@ -719,14 +932,14 @@ function ContentManagementComponent() {
                           }}
                         />
                       ) : (
-                        <div className="h-10 w-10 rounded-full bg-amber-100 flex items-center justify-center text-[#521903] font-black text-xs uppercase">
+                        <div className="h-12 w-12 rounded-2xl bg-amber-100 flex items-center justify-center text-[#521903] font-black text-sm uppercase">
                           {cat.name.slice(0, 2)}
                         </div>
                       )}
                     </div>
-                    <span className="text-xs font-black text-[#521903] truncate w-full">{cat.label}</span>
-                    <span className="text-[10px] font-bold text-slate-400">
-                      {count} {count === 1 ? 'Activity' : 'Activities'}
+                    <span className="text-sm font-black text-[#521903] truncate w-full">{cat.label}</span>
+                    <span className="text-[11px] font-bold text-slate-400">
+                      {count} Activities Available
                     </span>
                   </div>
                 );
@@ -734,259 +947,652 @@ function ContentManagementComponent() {
             </div>
           </div>
 
-          {/* TABS & DIFFICULTY FILTERS */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveTab('live')}
-                className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-                  activeTab === 'live' ? 'bg-[#521903] text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Live in App ({activities.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('submissions')}
-                className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
-                  activeTab === 'submissions'
-                    ? 'bg-[#521903] text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Approval Submissions ({mySubmissions.length})
-              </button>
-            </div>
+          {/* ACTIVE CATEGORY WORKSPACE CONTAINER */}
+          <div className="bg-white rounded-3xl border border-[#F5E6C4] p-5 shadow-sm space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 bg-amber-100 text-[#521903] rounded-xl text-xs font-black uppercase tracking-wider">
+                  {activeCategory.toUpperCase()} Module
+                </span>
+                <p className="text-xs font-bold text-slate-400">
+                  {workspaceTab === 'tutorials_practice' ? 'Tutorials & Practice Gesture Recognition' : 'Graded Activity Roadmap Levels'}
+                </p>
+              </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Difficulty:</span>
-              {(['all', 'easy', 'medium', 'hard'] as const).map((diff) => (
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl border border-slate-200">
                 <button
-                  key={diff}
-                  onClick={() => setSelectedDifficultyFilter(diff)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold capitalize transition-all ${
-                    selectedDifficultyFilter === diff
-                      ? 'bg-[#F2B33D] text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  onClick={() => setWorkspaceTab('tutorials_practice')}
+                  className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                    workspaceTab === 'tutorials_practice' ? 'bg-[#F2B33D] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  {diff}
+                  <BookOpen className="h-3.5 w-3.5" /> 1. Tutorials & Practice ({currentLessons.length})
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* TAB 1: LIVE IN APP QUESTIONS */}
-          {activeTab === 'live' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">
-                  Published Mobile Questions ({filteredActivities.length})
-                </h3>
-                {loading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
-              </div>
-
-              {error && (
-                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-3">
-                  <AlertTriangle className="h-5 w-5 text-rose-500" />
-                  <p className="text-xs font-bold text-rose-700">{error}</p>
-                </div>
-              )}
-
-              {!loading && filteredActivities.length === 0 && (
-                <div className="p-12 text-center bg-white rounded-3xl border border-slate-100">
-                  <HelpCircle className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-slate-400">No activity questions found.</p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filteredActivities.map((item) => {
-                  const diffMeta = parseDifficultyLabel(item.level);
-
-                  return (
-                    <div
-                      key={item.id}
-                      className="bg-white rounded-3xl border border-slate-200/80 p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-50 border border-amber-200 text-[#B4790C]">
-                            {item.category}
-                          </span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${diffMeta.color}`}>
-                            {diffMeta.label}
-                          </span>
-                        </div>
-
-                        <ActivityImageCard imageUrl={item.image_url} correctAnswer={item.correct_answer} category={item.category} />
-
-                        <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Prompt</span>
-                          <p className="text-xs font-black text-[#521903]">{item.question_text || 'Solve:'}</p>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Options</span>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {item.options?.map((opt, i) => (
-                              <OptionDisplay key={i} index={i} option={opt} isCorrect={opt === item.correct_answer} />
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
-                        <button
-                          onClick={() => openEditLiveQuestion(item)}
-                          className="inline-flex items-center gap-1.5 text-xs font-black text-[#521903] hover:underline cursor-pointer"
-                        >
-                          <Edit3 className="h-3.5 w-3.5 text-[#F2B33D]" />
-                          Edit Question
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget({ item, type: 'live_request' })}
-                          className="p-1.5 text-slate-300 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                          title="Request Deletion from Admin"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                <button
+                  onClick={() => setWorkspaceTab('activity_levels')}
+                  className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                    workspaceTab === 'activity_levels' ? 'bg-[#521903] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Trophy className="h-3.5 w-3.5" /> 2. Activity Quizzes ({categoryActivities.length})
+                </button>
               </div>
             </div>
-          )}
 
-          {/* TAB 2: TEACHER SUBMISSIONS */}
-          {activeTab === 'submissions' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-2 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider mr-1 flex items-center gap-1">
-                    <Filter className="h-3.5 w-3.5" /> Status:
-                  </span>
+            {/* TAB 1: TUTORIALS & PRACTICE GESTURES */}
+            {workspaceTab === 'tutorials_practice' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                    <Smartphone className="h-4 w-4 text-[#F2B33D]" /> Mobile Tutorial List & Real-time Practice ({currentLessons.length} Signs)
+                  </h3>
+
                   <button
-                    onClick={() => setSubmissionStatusFilter('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-                      submissionStatusFilter === 'all' ? 'bg-[#521903] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                    onClick={() => setShowNewSignModal(true)}
+                    className="inline-flex items-center gap-1.5 bg-[#521903] hover:bg-[#3B1102] text-white font-black px-4 py-2 rounded-2xl text-xs uppercase tracking-wider shadow-sm cursor-pointer"
                   >
-                    All ({submissionCounts.all})
-                  </button>
-                  <button
-                    onClick={() => setSubmissionStatusFilter('pending')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
-                      submissionStatusFilter === 'pending' ? 'bg-[#F2B33D] text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    <Clock className="h-3 w-3" /> Pending ({submissionCounts.pending})
-                  </button>
-                  <button
-                    onClick={() => setSubmissionStatusFilter('approved')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
-                      submissionStatusFilter === 'approved' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    <CheckCircle2 className="h-3 w-3" /> Approved ({submissionCounts.approved})
-                  </button>
-                  <button
-                    onClick={() => setSubmissionStatusFilter('rejected')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
-                      submissionStatusFilter === 'rejected' ? 'bg-rose-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    <XCircle className="h-3 w-3" /> Rejected ({submissionCounts.rejected})
+                    <Plus className="h-3.5 w-3.5" /> Add Tutorial Sign
                   </button>
                 </div>
-              </div>
 
-              {filteredSubmissions.length === 0 ? (
-                <div className="p-10 text-center bg-white rounded-3xl border border-slate-100 text-xs font-bold text-slate-400">
-                  No submissions matching the selected status.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {filteredSubmissions.map((sub) => {
-                    const isPending = sub.status === 'pending';
-                    const isApproved = sub.status === 'approved';
-                    const isRejected = sub.status === 'rejected';
-                    const isDeleteAction = sub.submissionType === 'delete';
-                    const diffMeta = parseDifficultyLabel(sub.level || sub.difficulty);
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {currentLessons.map((lesson, idx) => {
+                    const trainingInfo = gestureTrainingList.find(
+                      (g) => g.gestureKey.toLowerCase() === lesson.symbol.toLowerCase()
+                    );
 
                     return (
-                      <div key={sub.id} className="bg-white rounded-3xl border border-slate-200/80 p-4 shadow-sm flex flex-col justify-between">
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-50 border text-slate-600">
-                              {sub.category}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              {isDeleteAction && (
-                                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-300">
-                                  Deletion Request
+                      <div
+                        key={lesson.id}
+                        onClick={() => {
+                          setSelectedLessonIndex(idx);
+                          setSimulatorMode('tutorial');
+                        }}
+                        className="bg-white rounded-3xl border-2 border-[#F5E6C4] p-4 flex items-center justify-between gap-4 shadow-sm hover:shadow-md hover:border-[#F2B33D] transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className="h-12 w-12 rounded-2xl bg-[#FAF6EE] border border-[#F5E6C4] flex items-center justify-center font-black text-xl text-[#521903] shadow-inner group-hover:scale-105 transition-transform flex-shrink-0">
+                            {lesson.symbol.slice(0, 2)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-black text-[#521903] truncate">{lesson.displayTitle}</h4>
+                              {trainingInfo && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold text-[9px] border border-emerald-200 flex items-center gap-0.5 flex-shrink-0">
+                                  <Check className="h-2.5 w-2.5" /> Trained
                                 </span>
                               )}
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${diffMeta.color}`}>
-                                {diffMeta.label}
-                              </span>
-                              <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                                  isPending
-                                    ? 'bg-amber-50 border-amber-200 text-amber-600'
-                                    : isApproved
-                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
-                                    : 'bg-rose-50 border-rose-200 text-rose-600'
-                                }`}
-                              >
-                                {isPending && <Clock className="h-3 w-3" />}
-                                {isApproved && <CheckCircle2 className="h-3 w-3" />}
-                                {isRejected && <XCircle className="h-3 w-3" />}
-                                {sub.status}
-                              </span>
                             </div>
+                            <p className="text-[11px] text-slate-400 font-semibold truncate">{lesson.description || 'Instructional gesture'}</p>
                           </div>
-
-                          <ActivityImageCard imageUrl={sub.imageUrl} correctAnswer={sub.correctAnswer} category={sub.category} />
-
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Prompt</span>
-                            <p className="text-xs font-black text-[#521903]">{sub.questionText}</p>
-                          </div>
-
-                          {isRejected && sub.rejectionReason && (
-                            <div className="p-2.5 bg-rose-50 rounded-xl border border-rose-200 text-[11px] text-rose-700 font-medium">
-                              <span className="font-bold block uppercase tracking-wider text-[9px] text-rose-500 mb-0.5">Admin Feedback:</span>
-                              {sub.rejectionReason}
-                            </div>
-                          )}
                         </div>
 
-                        <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
-                          {!isApproved && !isDeleteAction ? (
-                            <button onClick={() => openEditSubmission(sub)} className="text-xs font-black text-[#521903] hover:underline cursor-pointer">
-                              Edit & Resubmit
-                            </button>
-                          ) : isDeleteAction ? (
-                            <span className="text-xs font-bold text-rose-600">Pending Admin Removal</span>
-                          ) : (
-                            <span className="text-xs font-bold text-emerald-600">Live in Mobile App</span>
-                          )}
-                          <button onClick={() => setDeleteTarget({ submissionId: sub.id, type: 'submission' })} className="p-1.5 text-slate-300 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer">
-                            <Trash2 className="h-4 w-4" />
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedLessonIndex(idx);
+                              setSimulatorMode('train');
+                            }}
+                            className="px-2.5 py-1.5 bg-[#521903] hover:bg-[#3B1102] text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="Calibrate / Train Gesture Data"
+                          >
+                            <Camera className="h-3 w-3" /> Train
                           </button>
+
+                          <div className="h-9 w-9 rounded-full bg-amber-50 border border-amber-200 text-[#F2B33D] group-hover:bg-[#F2B33D] group-hover:text-white flex items-center justify-center transition-colors shadow-sm">
+                            <Play className="h-3.5 w-3.5 fill-current ml-0.5" />
+                          </div>
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+
+            {/* TAB 2: ACTIVITY ROADMAP QUIZZES */}
+            {workspaceTab === 'activity_levels' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveTab('live')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+                        activeTab === 'live' ? 'bg-[#521903] text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      Live Mobile Road ({categoryActivities.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('submissions')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                        activeTab === 'submissions'
+                          ? 'bg-[#521903] text-white shadow-sm'
+                          : 'bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      Approval Submissions ({mySubmissions.filter((s) => s.category === activeCategory).length})
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={openNewQuestion}
+                    className="px-4 py-2 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black text-xs rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="h-4 w-4" /> Add Road Level Question
+                  </button>
+                </div>
+
+                {activeTab === 'live' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {categoryActivities.map((item) => {
+                      const diffMeta = parseDifficultyLabel(item.level);
+
+                      return (
+                        <div
+                          key={item.id}
+                          className="bg-white rounded-3xl border border-slate-200/80 p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                        >
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-50 border border-amber-200 text-[#B4790C]">
+                                {item.category}
+                              </span>
+                              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${diffMeta.color}`}>
+                                {diffMeta.label}
+                              </span>
+                            </div>
+
+                            <ActivityImageCard imageUrl={item.image_url} correctAnswer={item.correct_answer} category={item.category} />
+
+                            <div>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Prompt</span>
+                              <p className="text-xs font-black text-[#521903]">{item.question_text || 'Solve:'}</p>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Options</span>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {item.options?.map((opt, i) => (
+                                  <OptionDisplay key={i} index={i} option={opt} isCorrect={opt === item.correct_answer} />
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
+                            <button
+                              onClick={() => openEditLiveQuestion(item)}
+                              className="inline-flex items-center gap-1.5 text-xs font-black text-[#521903] hover:underline cursor-pointer"
+                            >
+                              <Edit3 className="h-3.5 w-3.5 text-[#F2B33D]" />
+                              Edit Level
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget({ item, type: 'live_request' })}
+                              className="p-1.5 text-slate-300 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Request Deletion from Admin"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* 2. WIZARD STEP 1: BASE QUESTION */}
+      {/* 2. REAL-TIME MOBILE APP SIMULATOR & GESTURE GUIDANCE MODAL */}
+      {selectedLessonIndex !== null && activeLesson && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn">
+          <div className="bg-[#FAF6EE] border-4 border-[#F2B33D] w-full max-w-[340px] sm:max-w-[390px] rounded-[36px] shadow-2xl overflow-hidden flex flex-col justify-between my-auto relative select-none">
+            {/* Top Bar */}
+            <div className="bg-[#FAF6EE] px-4 py-3 flex items-center justify-between border-b border-[#F5E6C4]/60">
+              <button
+                onClick={() => setSelectedLessonIndex(null)}
+                className="p-1.5 bg-white border border-[#F5E6C4] rounded-full text-[#521903] hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+
+              <h3 className="text-xs font-black text-[#521903] uppercase tracking-wider">
+                {simulatorMode === 'tutorial'
+                  ? 'Tutorial'
+                  : simulatorMode === 'practice'
+                  ? 'Practice Mode'
+                  : simulatorMode === 'train'
+                  ? 'Train Dataset Guidance'
+                  : 'Continuous Practice'}
+              </h3>
+
+              <div className="flex items-center gap-1 bg-[#F2B33D]/20 px-2.5 py-1 rounded-full text-[10px] font-black text-[#B4790C]">
+                <Zap className="h-3 w-3 fill-current" />
+                <span>0 XP</span>
+              </div>
+            </div>
+
+            {/* Mobile Screen Body */}
+            <div className="p-4 sm:p-5 flex flex-col items-center justify-center space-y-3">
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">{activeLesson.displayTitle}</h1>
+
+              <div className="h-36 w-36 bg-white rounded-3xl border border-slate-150 p-2 shadow-md flex items-center justify-center overflow-hidden">
+                <ActivityImageCard
+                  imageUrl={activeLesson.imageUrl}
+                  correctAnswer={activeLesson.symbol}
+                  category={activeLesson.category}
+                />
+              </div>
+
+              {/* MODE 1: TUTORIAL */}
+              {simulatorMode === 'tutorial' && (
+                <div className="w-full space-y-3 pt-1">
+                  <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                      style={{ width: `${((selectedLessonIndex + 1) / currentLessons.length) * 100}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between px-2 text-xs font-black text-slate-700">
+                    <button
+                      onClick={() => setSelectedLessonIndex((prev) => (prev !== null && prev > 0 ? prev - 1 : 0))}
+                      disabled={selectedLessonIndex === 0}
+                      className="inline-flex items-center gap-1 hover:text-[#F2B33D] disabled:opacity-30 cursor-pointer"
+                    >
+                      <ChevronLeft className="h-4 w-4" /> Previous
+                    </button>
+                    <button
+                      onClick={() =>
+                        setSelectedLessonIndex((prev) =>
+                          prev !== null && prev < currentLessons.length - 1 ? prev + 1 : prev
+                        )
+                      }
+                      disabled={selectedLessonIndex === currentLessons.length - 1}
+                      className="inline-flex items-center gap-1 hover:text-[#F2B33D] disabled:opacity-30 cursor-pointer"
+                    >
+                      Next <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      onClick={() => setSimulatorMode('practice')}
+                      className="w-full py-2.5 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black text-xs rounded-2xl shadow transition-transform active:scale-95 cursor-pointer uppercase tracking-wider"
+                    >
+                      Practice
+                    </button>
+                    <button
+                      onClick={() => setSimulatorMode('train')}
+                      className="w-full py-2.5 bg-[#521903] hover:bg-[#3B1102] text-white font-black text-xs rounded-2xl shadow transition-transform active:scale-95 cursor-pointer uppercase tracking-wider flex items-center justify-center gap-1"
+                    >
+                      <Camera className="h-3.5 w-3.5" /> Train Data
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* MODE 2: WEBCAM PRACTICE */}
+              {(simulatorMode === 'practice' || simulatorMode === 'continuous') && (
+                <div className="w-full flex flex-col items-center space-y-2.5">
+                  <div className="h-40 w-40 bg-black rounded-3xl overflow-hidden relative shadow-inner border-2 border-slate-900 flex items-center justify-center">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <div className="h-28 w-28 rounded-full border-2 border-white/60 flex items-center justify-center text-center p-2">
+                        <span className="text-[10px] font-black text-white/90 uppercase tracking-widest drop-shadow">
+                          Position Hand
+                        </span>
+                      </div>
+                    </div>
+
+                    {!cameraActive && (
+                      <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center text-center p-3 text-white/60">
+                        <VideoOff className="h-6 w-6 mb-1" />
+                        <span className="text-[10px] font-bold">Webcam Ready</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {livePrediction ? (
+                    <div
+                      className={`px-4 py-1.5 rounded-full border shadow-sm text-xs font-black flex items-center gap-1.5 ${
+                        livePrediction.isCorrect
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                          : 'bg-amber-50 border-amber-300 text-amber-700'
+                      }`}
+                    >
+                      {livePrediction.isCorrect ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                      Detected: {livePrediction.label} ({Math.round(livePrediction.confidence * 100)}%)
+                    </div>
+                  ) : (
+                    <div className="px-4 py-1 rounded-full bg-white border border-[#F5E6C4] shadow-sm text-xs font-black text-slate-500">
+                      {modelsReady.gestureModel ? 'Watching for your sign…' : 'Loading recognition model…'}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 w-full">
+                    <button
+                      onClick={() => setSimulatorMode('tutorial')}
+                      className="flex-1 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50"
+                    >
+                      Tutorial
+                    </button>
+                    <button
+                      onClick={() => setSimulatorMode('train')}
+                      className="flex-1 py-2 bg-[#521903] text-white font-black text-xs rounded-xl shadow hover:bg-[#3B1102]"
+                    >
+                      Train Guidance
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* MODE 3: ACTIVE GESTURE TRAINING */}
+              {simulatorMode === 'train' && (
+                <div className="w-full flex flex-col items-center space-y-3">
+                  <div
+                    className={`h-40 w-40 bg-black rounded-3xl overflow-hidden relative shadow-inner border-2 transition-all duration-300 flex items-center justify-center ${
+                      overallQuality > 80 ? 'border-emerald-500 ring-4 ring-emerald-500/30' : 'border-amber-400'
+                    }`}
+                  >
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <div
+                        className={`h-28 w-28 rounded-full border-2 flex items-center justify-center text-center p-2 transition-all ${
+                          overallQuality > 80 ? 'border-emerald-400 bg-emerald-500/10' : 'border-white/70'
+                        }`}
+                      >
+                        <span className="text-[10px] font-black text-white uppercase tracking-wider drop-shadow">
+                          {overallQuality > 80 ? 'Optimal Posture ✓' : 'Align Hand'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full bg-amber-50 border border-amber-200 p-2 rounded-xl text-center">
+                    <p className="text-[11px] font-black text-amber-800 animate-pulse flex items-center justify-center gap-1">
+                      <Compass className="h-3 w-3 text-amber-600 flex-shrink-0" />
+                      {guidanceTip}
+                    </p>
+                  </div>
+
+                  {/* ACTIVE POSTURE INDICATORS */}
+                  <div className="w-full bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                    <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                        <Compass className="h-3 w-3 text-[#F2B33D]" /> Real-time Posture Metrics
+                      </span>
+                      <span className="text-[9px] font-black text-slate-400">Target: &gt;75%</span>
+                    </div>
+
+                    {/* 1. ROTATE */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-black text-slate-700">
+                        <span className="flex items-center gap-1">
+                          <RotateCw className="h-3 w-3 text-slate-400" /> Rotate (Angle):
+                        </span>
+                        <span className={livePosture.rotate >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
+                          {livePosture.rotate}% {livePosture.rotate >= 75 ? '✓' : '• adjust palm'}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            livePosture.rotate >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
+                          }`}
+                          style={{ width: `${livePosture.rotate}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 2. TILT */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-black text-slate-700">
+                        <span className="flex items-center gap-1">
+                          <Sliders className="h-3 w-3 text-slate-400" /> Tilt (Pitch):
+                        </span>
+                        <span className={livePosture.tilt >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
+                          {livePosture.tilt}% {livePosture.tilt >= 75 ? '✓' : '• tilt up'}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            livePosture.tilt >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
+                          }`}
+                          style={{ width: `${livePosture.tilt}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 3. DISTANCE */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-black text-slate-700">
+                        <span className="flex items-center gap-1">
+                          <Move className="h-3 w-3 text-slate-400" /> Distance (Depth):
+                        </span>
+                        <span className={livePosture.distance >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
+                          {livePosture.distance}% {livePosture.distance >= 75 ? '✓' : '• center hand'}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            livePosture.distance >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
+                          }`}
+                          style={{ width: `${livePosture.distance}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 4. SWITCH HANDS */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-[10px] font-black text-slate-700">
+                        <span className="flex items-center gap-1">
+                          <HandMetal className="h-3 w-3 text-slate-400" /> Switch Hands:
+                        </span>
+                        <span className={livePosture.switchHands >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
+                          {livePosture.switchHands}% {livePosture.switchHands >= 75 ? '✓' : ''}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            livePosture.switchHands >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
+                          }`}
+                          style={{ width: `${livePosture.switchHands}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full space-y-1 text-center">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-500 px-1">
+                      <span>Valid Posture Samples</span>
+                      <span className="font-mono">{samplesCaptured} / {REQUIRED_VALID_SAMPLES}</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                        style={{ width: `${(samplesCaptured / REQUIRED_VALID_SAMPLES) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full pt-1">
+                    <button
+                      onClick={() => setSimulatorMode('practice')}
+                      disabled={trainingSaving}
+                      className="flex-1 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={handleSaveTrainingSample}
+                      disabled={trainingSaving || samplesCaptured < 1}
+                      className="flex-1 py-2 bg-[#F2B33D] hover:bg-[#D99A26] disabled:opacity-50 text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
+                    >
+                      {trainingSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      Submit for Approval
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. MODAL: ADD NEW TUTORIAL & PRACTICE SIGN (WITH DRAG-AND-DROP IMAGE UPLOAD) */}
+      {showNewSignModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white p-6 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-black uppercase tracking-wider text-[#521903]">
+                Add Sign to {activeCategory.toUpperCase()} Module
+              </h3>
+              <button
+                onClick={() => setShowNewSignModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewTutorialSign} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  Sign Symbol / Word
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Z, 11, Kumusta, Salamat"
+                  value={newSignSymbol}
+                  onChange={(e) => setNewSignSymbol(e.target.value)}
+                  className="w-full px-4 py-2 border-2 border-slate-200 bg-slate-50/50 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:bg-white"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  Display Title (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Kumusta / Hello"
+                  value={newSignTitle}
+                  onChange={(e) => setNewSignTitle(e.target.value)}
+                  className="w-full px-4 py-2 border-2 border-slate-200 bg-slate-50/50 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:bg-white"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  Instruction / Description
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. FSL hand sign demonstration"
+                  value={newSignDesc}
+                  onChange={(e) => setNewSignDesc(e.target.value)}
+                  className="w-full px-4 py-2 border-2 border-slate-200 bg-slate-50/50 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:bg-white"
+                />
+              </div>
+
+              {/* Drag-and-Drop Image Staging Zone */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
+                  Illustration Image (Upload or Drag & Drop)
+                </label>
+
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (!creatingSign) setIsSignImgDragging(true);
+                  }}
+                  onDragLeave={() => setIsSignImgDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsSignImgDragging(false);
+                    if (creatingSign) return;
+                    if (e.dataTransfer.files?.[0]) setNewSignFile(e.dataTransfer.files[0]);
+                  }}
+                  className={`w-full rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-center p-4 transition-all ${
+                    isSignImgDragging
+                      ? 'border-[#F2B33D] bg-[#FFFBEB]'
+                      : newSignPreviewUrl
+                      ? 'border-emerald-500 bg-emerald-50/30'
+                      : 'border-slate-200 bg-slate-50/60'
+                  }`}
+                >
+                  {newSignPreviewUrl ? (
+                    <div className="flex flex-col items-center space-y-1.5">
+                      <div className="h-24 w-24 bg-white border border-emerald-400 rounded-2xl p-1.5 shadow-sm flex items-center justify-center overflow-hidden">
+                        <img src={newSignPreviewUrl} alt="Staged" className="max-h-full max-w-full object-contain" />
+                      </div>
+                      <span className="text-[10px] font-black text-emerald-700 flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Picture Staged
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center space-y-1">
+                      <ImageIcon className="h-6 w-6 text-slate-400 mb-0.5" />
+                      <p className="font-black text-slate-700 text-xs">Drag & drop picture here</p>
+                      <p className="text-[10px] text-slate-400">or click browse below</p>
+                    </div>
+                  )}
+
+                  <label className="mt-2.5 inline-flex items-center justify-center bg-white border border-slate-200 hover:border-[#521903] text-[#521903] font-black px-4 py-1.5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer shadow-xs">
+                    {newSignPreviewUrl ? 'Change Picture' : 'Browse Picture'}
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={creatingSign}
+                      accept=".jpeg,.png,.jpg,.webp"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) setNewSignFile(e.target.files[0]);
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Or enter path: e.g. /assets/pictures/A.jpg"
+                  value={newSignImg}
+                  onChange={(e) => setNewSignImg(e.target.value)}
+                  className="w-full px-3.5 py-1.5 border border-slate-200 bg-slate-50/50 rounded-xl text-[11px] font-semibold text-slate-700 focus:outline-none focus:bg-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNewSignModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingSign || !newSignSymbol.trim()}
+                  className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider text-white bg-[#521903] hover:bg-[#3B1102] disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  {creatingSign && <Loader2 className="h-3 w-3 animate-spin" />} Create Sign & Tutorial
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. WIZARD STEP 1: QUESTION BASE */}
       {screen === 'wizard_question' && (
         <div className="w-full max-w-3xl mx-auto flex flex-col gap-4 animate-fadeIn pb-6">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
@@ -1143,13 +1749,13 @@ function ContentManagementComponent() {
                       <img src={filePreviewUrl} alt="New upload preview" className="max-h-full max-w-full object-contain" />
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-full font-black text-xs">
-                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600" /> New Picture Staged
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> New Picture Staged
                     </span>
                   </div>
                 ) : formState.image_url ? (
                   <div className="flex flex-col items-center space-y-2">
                     <div className="h-44 w-44 bg-[#FAF6EE] border border-[#F5E6C4] rounded-2xl p-2 shadow-sm flex items-center justify-center overflow-hidden">
-                      <ActivityImageCard imageUrl={formState.image_url} correctAnswer={formState.correct_answer} category={formState.category} />
+                      <ActivityImageCard imageUrl={formState.image_url} correctAnswer={formState.correct_answer || ''} category={formState.category} />
                     </div>
                     <span className="text-[11px] font-bold text-slate-400">Current Image Loaded</span>
                   </div>
@@ -1198,7 +1804,7 @@ function ContentManagementComponent() {
         </div>
       )}
 
-      {/* 3. WIZARD STEP 2: ANSWER OPTIONS */}
+      {/* 5. WIZARD STEP 2: OPTIONS */}
       {screen === 'wizard_answers' && (
         <div className="w-full max-w-3xl mx-auto flex flex-col gap-4 animate-fadeIn pb-6">
           <div className="w-full bg-[#F2B33D] text-white p-4 rounded-2xl shadow-sm flex items-center justify-between gap-3">
@@ -1445,7 +2051,7 @@ function ContentManagementComponent() {
         </div>
       )}
 
-      {/* DELETION REQUEST CONFIRMATION MODAL */}
+      {/* DELETION REQUEST MODAL */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white p-6 w-full max-w-sm rounded-3xl shadow-2xl text-center space-y-4 border border-slate-100">
