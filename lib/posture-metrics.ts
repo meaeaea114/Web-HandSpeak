@@ -7,8 +7,9 @@ export interface HandOrientation {
 }
 
 export interface FramingQuality {
-  distance: number; // 0-100, how well-sized the hand is in frame
+  distance: number; // 0-100, how well-sized the hand is in frame (symmetric — doesn't say too close vs too far)
   switchHands: number; // 0-100, are the expected number of hands visible
+  sizeRatio: number; // hand bounding-box area / ideal area. 1.0 = ideal size, >1 = closer than ideal, <1 = farther than ideal. Directional, unlike `distance`.
 }
 
 // MediaPipe hand landmark indices (21 points per hand)
@@ -57,7 +58,7 @@ export function computeHandOrientation(hand: Landmark[]): HandOrientation {
  * good distance/centering for the front view, the side view, all of them.
  */
 export function computeFramingQuality(landmarksPerHand: Landmark[][], expectedHands: number): FramingQuality {
-  if (landmarksPerHand.length === 0) return { distance: 0, switchHands: 0 };
+  if (landmarksPerHand.length === 0) return { distance: 0, switchHands: 0, sizeRatio: 0 };
 
   const primary = landmarksPerHand[0];
   const xs = primary.map((p) => p.x);
@@ -70,8 +71,9 @@ export function computeFramingQuality(landmarksPerHand: Landmark[][], expectedHa
   const distance = clampScore(100 - Math.abs(bboxArea - idealArea) * 650);
   const switchHands =
     landmarksPerHand.length >= expectedHands ? 100 : Math.round((landmarksPerHand.length / expectedHands) * 100);
+  const sizeRatio = idealArea > 0 ? bboxArea / idealArea : 0;
 
-  return { distance: Math.round(distance), switchHands: Math.round(switchHands) };
+  return { distance: Math.round(distance), switchHands: Math.round(switchHands), sizeRatio };
 }
 
 function clampScore(v: number): number {

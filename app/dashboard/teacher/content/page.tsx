@@ -59,6 +59,8 @@ import {
   requestActivityDeletion,
   deleteContentSubmission,
   uploadActivityImage,
+  getAllowedActivityTypesForDifficulty,
+  isActivityTypeAllowedForDifficulty,
 } from '@/lib/content-service';
 
 // Real MediaPipe detection + smoothed orientation + take-based LSTM sequence capture/scoring
@@ -130,6 +132,36 @@ const DETECTION_INTERVAL_MS = 120; // ~8 detections/sec — plenty for landmark 
 const ORIENTATION_SMOOTHING_ALPHA = 0.25; // lower = smoother/slower, higher = more responsive/jittery
 const REQUIRED_TAKES = 15; // how many full-sequence repetitions of a sign we want per dataset
 
+// Returns the options array a given Activity Type should start with when
+// selected — either a structural default (True/False's two fixed choices,
+// Matching's pair placeholders, Sequencing's ordered-step placeholders) or,
+// when neither the newly selected nor the previously selected type needs a
+// different structure, the caller's existing options untouched. This keeps
+// stale data (e.g. leftover Matching pairs) from silently surviving a
+// switch to an unrelated Activity Type.
+function computeDefaultOptionsForType(selectedType: string, previousType: string, currentOptions: string[]): string[] {
+  if (selectedType === 'true_false') return ['True', 'False'];
+  if (selectedType === 'matching_type') return ['|||', '|||', '|||'];
+  if (selectedType === 'sequence_order') return ['', '', ''];
+  if (['true_false', 'matching_type', 'sequence_order'].includes(previousType)) return ['', '', '', ''];
+  return currentOptions;
+}
+
+// Whether choice pools for this Activity Type default to image-based
+// (Sign/picture) choices rather than plain text choices.
+function computeOptionsModeForType(type: string): 'text' | 'image' {
+  return type === 'text_to_sign' || type === 'solve_to_sign' || type === 'fill_in_the_blank' ? 'image' : 'text';
+}
+
+// Some correct-answer values are internal sentinels used to mark a
+// structured activity type (e.g. "MATCHING_SET" / "SEQUENCE_SET" /
+// "BLANK_SET") rather than a real display value — never show these to a
+// teacher as if they were a meaningful label or image filename.
+function isInternalActivityIdentifier(value?: string): boolean {
+  if (!value) return false;
+  return /^(MATCHING_SET|SEQUENCE_SET|BLANK_SET)$/i.test(value.trim());
+}
+
 function parseDifficultyLabel(levelStr?: string): { label: string; color: string } {
   if (!levelStr) return { label: 'Easy', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
   const lower = levelStr.toLowerCase();
@@ -178,13 +210,21 @@ function ActivityImageCard({
   const currentSrc = candidateUrls[errorIndex];
 
   if (!currentSrc || errorIndex >= candidateUrls.length) {
+    const badgeText =
+      correctAnswer && !isInternalActivityIdentifier(correctAnswer)
+        ? correctAnswer
+        : category
+        ? category.slice(0, 2).toUpperCase()
+        : '?';
+    const isPlaceholderImageValue = !imageUrl || isInternalActivityIdentifier(imageUrl);
+
     return (
       <div className="h-32 w-full bg-[#FAF6EE] border border-[#F5E6C4] rounded-2xl flex flex-col items-center justify-center p-3 text-center">
         <div className="h-9 w-9 rounded-full bg-[#F2B33D]/20 text-[#521903] flex items-center justify-center font-black text-base mb-1">
-          {correctAnswer || (category ? category.slice(0, 2).toUpperCase() : '?')}
+          {badgeText}
         </div>
         <span className="text-[10px] font-bold text-slate-400 truncate max-w-full px-2">
-          {imageUrl ? imageUrl.replace(/^.*[\\/]/, '') : 'No Image'}
+          {isPlaceholderImageValue ? 'No Image' : imageUrl.replace(/^.*[\\/]/, '')}
         </span>
       </div>
     );
@@ -314,7 +354,7 @@ function ContentManagementComponent() {
   const [modelsReady, setModelsReady] = useState({ landmarker: false, gestureModel: false });
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const [liveOrientation, setLiveOrientation] = useState<HandOrientation>({ rollDeg: 0, pitchDeg: 0, yawDeg: 0 });
-  const [liveFraming, setLiveFraming] = useState<FramingQuality>({ distance: 0, switchHands: 0 });
+  const [liveFraming, setLiveFraming] = useState<FramingQuality>({ distance: 0, switchHands: 0, sizeRatio: 0 });
   const [handDetected, setHandDetected] = useState(false);
   const [isRecordingTake, setIsRecordingTake] = useState(false);
   const [takesCaptured, setTakesCaptured] = useState(0);
@@ -895,6 +935,12 @@ function ContentManagementComponent() {
     }
     if (!formState.question_text.trim()) {
       setSaveError('Please provide question text.');
+      return;
+    }
+
+    const resolvedType = formState.type === 'custom' ? formState.customType || 'custom_activity' : formState.type;
+    if (!isActivityTypeAllowedForDifficulty(resolvedType, formState.difficulty)) {
+      setSaveError(`This activity type isn't allowed for ${formState.difficulty} difficulty. Please choose a different type or difficulty.`);
       return;
     }
 
@@ -1965,11 +2011,27 @@ function ContentManagementComponent() {
                     disabled={saving}
                     onChange={(e) => {
                       const diff = e.target.value as 'easy' | 'medium' | 'hard';
+                      const allowedTypes = getAllowedActivityTypesForDifficulty(diff);
+                      // Easy is strictly limited to Sign to Text / Text to Sign — if the
+                      // currently selected Activity Type isn't allowed at the new
+                      // difficulty, fall back to the first allowed type for it rather
+                      // than letting an invalid difficulty/type combination persist.
+                      const typeStillAllowed = allowedTypes.includes(formState.type);
+                      const nextType = typeStillAllowed ? formState.type : allowedTypes[0] || formState.type;
+                      const nextOptions = typeStillAllowed
+                        ? formState.options
+                        : computeDefaultOptionsForType(nextType, formState.type, formState.options);
+
                       setFormState({
                         ...formState,
                         difficulty: diff,
+                        type: nextType,
+                        options: nextOptions,
+                        correctAnswerIndex: typeStillAllowed ? formState.correctAnswerIndex : 0,
+                        correct_answer: typeStillAllowed ? formState.correct_answer : '',
                         level: `${formState.category}_${diff}_1`,
                       });
+                      if (!typeStillAllowed) setOptionsMode(computeOptionsModeForType(nextType));
                     }}
                     className="w-full appearance-none px-3.5 py-2.5 pr-8 border-2 border-slate-200 bg-slate-50/50 rounded-xl focus:outline-none focus:bg-white text-slate-800 font-bold text-xs capitalize disabled:opacity-50 cursor-pointer"
                   >
@@ -1989,29 +2051,18 @@ function ContentManagementComponent() {
                     disabled={saving}
                     onChange={(e) => {
                       const selected = e.target.value;
-
-                      let defaultOptions = formState.options;
-                      if (selected === 'true_false') {
-                        defaultOptions = ['True', 'False'];
-                      } else if (selected === 'matching_type') {
-                        defaultOptions = ['|||', '|||', '|||'];
-                      } else if (selected === 'sequence_order') {
-                        defaultOptions = ['', '', ''];
-                      } else if (['true_false', 'matching_type', 'sequence_order'].includes(formState.type)) {
-                        defaultOptions = ['', '', '', ''];
-                      }
+                      const defaultOptions = computeDefaultOptionsForType(selected, formState.type, formState.options);
 
                       setFormState({ ...formState, type: selected, options: defaultOptions, correctAnswerIndex: 0, correct_answer: '' });
-
-                      if (selected === 'text_to_sign' || selected === 'solve_to_sign' || selected === 'fill_in_the_blank') {
-                        setOptionsMode('image');
-                      } else {
-                        setOptionsMode('text');
-                      }
+                      setOptionsMode(computeOptionsModeForType(selected));
                     }}
                     className="w-full appearance-none px-3.5 py-2.5 pr-8 border-2 border-slate-200 bg-slate-50/50 rounded-xl focus:outline-none focus:bg-white text-slate-800 font-bold text-xs disabled:opacity-50 cursor-pointer"
                   >
-                    {ACTIVITY_TYPES.map((t) => (
+                    {/* Only Activity Types allowed for the selected Difficulty are shown —
+                        Easy is intentionally restricted to Sign to Text / Text to Sign, so
+                        an invalid difficulty/type combination can never be submitted from
+                        the UI (also re-checked server-side, see validateActivityPayload). */}
+                    {ACTIVITY_TYPES.filter((t) => getAllowedActivityTypesForDifficulty(formState.difficulty).includes(t.id)).map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.label}
                       </option>

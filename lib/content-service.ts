@@ -94,6 +94,7 @@ export interface PublishedActivityQuestion {
   category: string;
   level: string;
   type: string;
+  difficulty?: ContentDifficulty;
   question_text: string;
   questionText?: string;
   image_url: string;
@@ -166,6 +167,204 @@ export const CONTENT_CATEGORIES = [
 ];
 
 export const CONTENT_DIFFICULTIES: ContentDifficulty[] = ['easy', 'medium', 'hard'];
+
+// ---------------------------------------------------------------------------
+// ACTIVITY QUESTION TYPE / DIFFICULTY POLICY
+// ---------------------------------------------------------------------------
+// Which Activity Question types may be used at each difficulty.
+//
+// This is a RESEARCH-INFORMED IMPLEMENTATION RECOMMENDATION, not a claim
+// that any single study specifically labeled "Sign to Text" as Easy or
+// "Sequencing" as Hard for FSL. The grouping instead follows a widely used
+// progression in assessment/instructional-design literature: foundational
+// recognition -> discrimination/association -> application, echoed in the
+// cognitive-process dimension of the revised Bloom's Taxonomy (Anderson &
+// Krathwohl, 2001, "A Taxonomy for Learning, Teaching, and Assessing"),
+// recognition-vs-recall memory research (e.g. Mandler, 1980, "Recognizing:
+// The judgment of previous occurrence" — recognition is consistently found
+// to be a lower-effort retrieval process than recall/production), and
+// cognitive load / scaffolding research (Sweller, 1988, "Cognitive load
+// during problem solving"; Wood, Bruner & Ross, 1976, "The role of tutoring
+// in problem solving") on sequencing complexity for novice/elementary
+// learners. See the accompanying research summary in this change's final
+// response for the full reasoning per activity type — do not reorder these
+// lists without updating that write-up.
+//
+// EASY is intentionally restricted to exactly the two types below; this is
+// enforced again (defense-in-depth) in the Content Management form's type
+// dropdown filtering and in validateActivityPayload().
+export const DIFFICULTY_ACTIVITY_TYPES: Record<ContentDifficulty, string[]> = {
+  easy: ['sign_to_text', 'text_to_sign'],
+  medium: ['multiple_choice', 'matching_type', 'pecs', 'true_false'],
+  hard: ['sequence_order', 'fill_in_the_blank', 'solve_to_sign', 'custom'],
+};
+
+const ALL_KNOWN_ACTIVITY_TYPES = new Set<string>([
+  ...DIFFICULTY_ACTIVITY_TYPES.easy,
+  ...DIFFICULTY_ACTIVITY_TYPES.medium,
+  ...DIFFICULTY_ACTIVITY_TYPES.hard,
+]);
+
+export function getAllowedActivityTypesForDifficulty(difficulty: ContentDifficulty): string[] {
+  return DIFFICULTY_ACTIVITY_TYPES[difficulty] || DIFFICULTY_ACTIVITY_TYPES.easy;
+}
+
+/**
+ * Whether `type` may be submitted/published at `difficulty`.
+ *
+ * A teacher-defined "Custom Activity Type" (anything not in one of the three
+ * known lists above) is only permitted outside Easy — Easy stays strictly
+ * limited to the two foundational recognition activities, per the product
+ * requirement that Easy never exposes complex/unstructured activity types.
+ */
+export function isActivityTypeAllowedForDifficulty(type: string, difficulty: ContentDifficulty): boolean {
+  const allowed = getAllowedActivityTypesForDifficulty(difficulty);
+  if (allowed.includes(type)) return true;
+  if (!ALL_KNOWN_ACTIVITY_TYPES.has(type) && difficulty !== 'easy') return true;
+  return false;
+}
+
+function stripUndefinedValues<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  Object.keys(obj).forEach((key) => {
+    if (obj[key] !== undefined) clean[key] = obj[key];
+  });
+  return clean as T;
+}
+
+export interface NormalizedActivityPayload {
+  category: string;
+  difficulty: ContentDifficulty;
+  type: string;
+  level: string;
+  questionText: string;
+  correctAnswer: string;
+  options: string[];
+  imageUrl: string;
+}
+
+/**
+ * Maps whatever mix of camelCase (Firestore canonical) and snake_case
+ * (legacy/local form-state) field names a caller passes in onto a single
+ * canonical shape, strips blank/placeholder option entries, and trims
+ * strings. Both content_submissions and activity_questions documents are
+ * built from this so the two collections can never drift apart on field
+ * naming (see the "IMPORTANT FIREBASE PAYLOAD FIX" requirement:
+ * question_text/image_url on the client must land as questionText/imageUrl
+ * in Firestore).
+ */
+export function normalizeActivityPayload(input: {
+  category?: string;
+  difficulty?: ContentDifficulty;
+  type?: string;
+  level?: string;
+  questionText?: string;
+  question_text?: string;
+  correctAnswer?: string;
+  correct_answer?: string;
+  options?: string[];
+  imageUrl?: string;
+  image_url?: string;
+}): NormalizedActivityPayload {
+  const category = (input.category || '').trim();
+  const difficulty = (input.difficulty || 'easy') as ContentDifficulty;
+  const type = (input.type || 'sign_to_text').trim();
+  const questionText = (input.questionText ?? input.question_text ?? '').trim();
+  const correctAnswer = (input.correctAnswer ?? input.correct_answer ?? '').trim();
+  const imageUrl = (input.imageUrl ?? input.image_url ?? '').trim();
+  const options = Array.isArray(input.options)
+    ? input.options
+        .filter((opt): opt is string => typeof opt === 'string')
+        .map((opt) => opt.trim())
+        .filter((opt) => opt !== '' && opt !== '|||')
+    : [];
+  const level = (input.level || `${category}_${difficulty}_1`).trim();
+
+  return { category, difficulty, type, level, questionText, correctAnswer, options, imageUrl };
+}
+
+export interface ActivityValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
+/**
+ * Structural + policy validation for an Activity Question payload. Runs
+ * before every write to content_submissions AND again before every publish
+ * to activity_questions, so an invalid difficulty/type combination or a
+ * structurally broken options set (incomplete matching pairs, missing
+ * sequence steps, no/duplicate correct answer, etc.) can never reach the
+ * database regardless of what the UI happened to allow at submission time.
+ */
+export function validateActivityPayload(payload: NormalizedActivityPayload): ActivityValidationResult {
+  if (!payload.category) return { valid: false, error: 'A category is required.' };
+  if (!CONTENT_DIFFICULTIES.includes(payload.difficulty)) {
+    return { valid: false, error: 'A valid difficulty (easy, medium, or hard) is required.' };
+  }
+  if (!payload.type) return { valid: false, error: 'An activity type is required.' };
+  if (!isActivityTypeAllowedForDifficulty(payload.type, payload.difficulty)) {
+    return {
+      valid: false,
+      error: `"${payload.type}" is not an allowed activity type for ${payload.difficulty} difficulty.`,
+    };
+  }
+  if (!payload.questionText) return { valid: false, error: 'Question text is required.' };
+
+  const { type } = payload;
+
+  if (type === 'matching_type') {
+    const pairs = payload.options
+      .map((opt) => opt.split('|||'))
+      .filter(([l, r]) => (l || '').trim() && (r || '').trim());
+    if (pairs.length < 2) {
+      return { valid: false, error: 'Matching activities need at least two complete pairs.' };
+    }
+    return { valid: true };
+  }
+
+  if (type === 'sequence_order') {
+    const steps = payload.options.filter((opt) => opt.trim() !== '');
+    if (steps.length < 2) {
+      return { valid: false, error: 'Sequencing activities need at least two ordered items.' };
+    }
+    return { valid: true };
+  }
+
+  if (type === 'fill_in_the_blank') {
+    if (!payload.correctAnswer) {
+      return { valid: false, error: 'A target word/pattern is required for fill-in-the-blank activities.' };
+    }
+    return { valid: true };
+  }
+
+  if (type === 'true_false') {
+    if (payload.options.length < 2 || !payload.correctAnswer) {
+      return { valid: false, error: 'True/False activities require both choices and a correct answer.' };
+    }
+    return { valid: true };
+  }
+
+  // multiple_choice, sign_to_text, text_to_sign, solve_to_sign, pecs, and any
+  // teacher-defined custom type all share the same "N choices + exactly one
+  // matching correct answer" structure.
+  if (payload.options.length < 2) {
+    return { valid: false, error: 'At least two answer choices are required.' };
+  }
+  if (!payload.correctAnswer) {
+    return { valid: false, error: 'A correct answer is required.' };
+  }
+  const matchCount = payload.options.filter((opt) => opt === payload.correctAnswer).length;
+  if (matchCount !== 1) {
+    return {
+      valid: false,
+      error:
+        matchCount === 0
+          ? 'The correct answer must match exactly one of the provided answer choices.'
+          : 'The correct answer matches more than one choice — choices must be unique.',
+    };
+  }
+  return { valid: true };
+}
 
 export const DEFAULT_TUTORIAL_LESSONS: Record<string, TutorialLesson[]> = {
   alphabet: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((char) => ({
@@ -592,31 +791,38 @@ export async function createContentSubmission(
   submitNow = true
 ) {
   const status: SubmissionStatus = submitNow ? 'pending' : 'draft';
-  const level = input.level || `${input.category}_${input.difficulty}_1`;
+  const normalized = normalizeActivityPayload(input);
+  const validation = validateActivityPayload(normalized);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'This activity question is invalid.');
+  }
 
-  return await addDoc(collection(db, 'content_submissions'), {
-    category: input.category,
-    difficulty: input.difficulty,
-    type: input.type,
-    submissionType: input.submissionType || (input.activityQuestionId ? 'update' : 'create'),
-    level,
-    questionText: input.questionText,
-    question_text: input.questionText,
-    correctAnswer: input.correctAnswer,
-    correct_answer: input.correctAnswer,
-    options: input.options,
-    imageUrl: input.imageUrl,
-    image_url: input.imageUrl,
-    activityQuestionId: input.activityQuestionId || null,
-    status,
-    isArchived: false,
-    createdById: userId,
-    createdByName: userName,
-    createdByEmail: userEmail,
-    createdAt: serverTimestamp(),
-    submittedAt: submitNow ? serverTimestamp() : null,
-    updatedAt: serverTimestamp(),
-  });
+  return await addDoc(
+    collection(db, 'content_submissions'),
+    stripUndefinedValues({
+      category: normalized.category,
+      difficulty: normalized.difficulty,
+      type: normalized.type,
+      submissionType: input.submissionType || (input.activityQuestionId ? 'update' : 'create'),
+      level: normalized.level,
+      questionText: normalized.questionText,
+      question_text: normalized.questionText,
+      correctAnswer: normalized.correctAnswer,
+      correct_answer: normalized.correctAnswer,
+      options: normalized.options,
+      imageUrl: normalized.imageUrl,
+      image_url: normalized.imageUrl,
+      activityQuestionId: input.activityQuestionId || null,
+      status,
+      isArchived: false,
+      createdById: userId,
+      createdByName: userName,
+      createdByEmail: userEmail,
+      createdAt: serverTimestamp(),
+      submittedAt: submitNow ? serverTimestamp() : null,
+      updatedAt: serverTimestamp(),
+    })
+  );
 }
 
 // 13. Request Activity Deletion from Admin Approval
@@ -665,25 +871,32 @@ export async function updateContentSubmission(
 ) {
   const docRef = doc(db, 'content_submissions', id);
   const status: SubmissionStatus = submitNow ? 'pending' : 'draft';
-  const level = input.level || `${input.category}_${input.difficulty}_1`;
+  const normalized = normalizeActivityPayload(input);
+  const validation = validateActivityPayload(normalized);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'This activity question is invalid.');
+  }
 
-  return await updateDoc(docRef, {
-    category: input.category,
-    difficulty: input.difficulty,
-    type: input.type,
-    submissionType: input.submissionType || 'update',
-    level,
-    questionText: input.questionText,
-    question_text: input.questionText,
-    correctAnswer: input.correctAnswer,
-    correct_answer: input.correctAnswer,
-    options: input.options,
-    imageUrl: input.imageUrl,
-    image_url: input.imageUrl,
-    status,
-    updatedAt: serverTimestamp(),
-    ...(submitNow ? { submittedAt: serverTimestamp() } : {}),
-  });
+  return await updateDoc(
+    docRef,
+    stripUndefinedValues({
+      category: normalized.category,
+      difficulty: normalized.difficulty,
+      type: normalized.type,
+      submissionType: input.submissionType || 'update',
+      level: normalized.level,
+      questionText: normalized.questionText,
+      question_text: normalized.questionText,
+      correctAnswer: normalized.correctAnswer,
+      correct_answer: normalized.correctAnswer,
+      options: normalized.options,
+      imageUrl: normalized.imageUrl,
+      image_url: normalized.imageUrl,
+      status,
+      updatedAt: serverTimestamp(),
+      ...(submitNow ? { submittedAt: serverTimestamp() } : {}),
+    })
+  );
 }
 
 // 15. Approve Submission (Admin)
@@ -760,16 +973,42 @@ export async function approveContentSubmission(
     const questionRef = doc(db, 'activity_questions', targetQuestionId);
     await deleteDoc(questionRef);
   } else {
-    const questionPayload = {
+    // Defense-in-depth: re-validate against the same policy the submission
+    // form enforces, so a malformed or Easy/complex-type-mismatched question
+    // can never be published even if it somehow reached this point (e.g. an
+    // older submission created before this validation existed).
+    const normalized = normalizeActivityPayload({
       category: sub.category,
-      level,
+      difficulty: sub.difficulty,
       type: sub.type || 'sign_to_text',
-      question_text: sub.questionText || sub.question_text || '',
-      correct_answer: sub.correctAnswer || sub.correct_answer || '',
-      options: sub.options || [],
-      image_url: sub.imageUrl || sub.image_url || '',
+      level,
+      questionText: sub.questionText || sub.question_text,
+      correctAnswer: sub.correctAnswer || sub.correct_answer,
+      options: sub.options,
+      imageUrl: sub.imageUrl || sub.image_url,
+    });
+    const validation = validateActivityPayload(normalized);
+    if (!validation.valid) {
+      throw new Error(`Cannot approve this activity question: ${validation.error}`);
+    }
+
+    // Written under both camelCase and snake_case keys (see
+    // "IMPORTANT FIREBASE PAYLOAD FIX") so existing consumers that expect
+    // either naming convention keep working without a migration.
+    const questionPayload = stripUndefinedValues({
+      category: normalized.category,
+      difficulty: normalized.difficulty,
+      level,
+      type: normalized.type,
+      question_text: normalized.questionText,
+      questionText: normalized.questionText,
+      correct_answer: normalized.correctAnswer,
+      correctAnswer: normalized.correctAnswer,
+      options: normalized.options,
+      image_url: normalized.imageUrl,
+      imageUrl: normalized.imageUrl,
       updatedAt: serverTimestamp(),
-    };
+    });
 
     if (targetQuestionId) {
       const questionRef = doc(db, 'activity_questions', targetQuestionId);

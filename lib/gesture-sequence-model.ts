@@ -10,7 +10,7 @@
 import * as tf from '@tensorflow/tfjs';
 import { FEATURE_VECTOR_LENGTH } from './posture-metrics';
 
-export const SEQUENCE_LENGTH = 30; // ~1 second at 30fps, or ~2s at 15fps sampling
+export const SEQUENCE_LENGTH = 30; // ~30 frames per take, captured at the app's ~8/sec detection rate (see DETECTION_INTERVAL_MS in content/page.tsx) — NOT 1s at 30fps
 
 export interface GesturePrediction {
   label: string;
@@ -22,6 +22,15 @@ let model: tf.LayersModel | null = null;
 let labelList: string[] = [];
 let loadingPromise: Promise<void> | null = null;
 
+/** True once loadGestureSequenceModel() has run and found no model deployed
+ * at all (e.g. a 404 on model.json) — as opposed to it never having been
+ * called yet, or a real network/parse failure. UI code can use this to show
+ * "no model trained yet" instead of a generic error. */
+let modelKnownAbsent = false;
+export function isGestureModelKnownAbsent(): boolean {
+  return modelKnownAbsent;
+}
+
 /**
  * Loads the model + its label map once. Call this when the training/practice
  * modal first mounts, not on every frame.
@@ -29,6 +38,13 @@ let loadingPromise: Promise<void> | null = null;
  * Expects two files served alongside each other:
  *   /models/gesture_lstm/model.json   (+ its .bin weight shards)
  *   /models/gesture_lstm/labels.json  (string[] in class-index order)
+ *
+ * Until a model has actually been trained and deployed (see
+ * scripts/train_gesture_lstm.py + scripts/export-training-dataset.js), this
+ * URL simply won't exist — that's an expected, documented state, not a bug.
+ * We check for it with a quiet HEAD request first so that state resolves
+ * silently (no thrown Error, no failed-request noise) instead of letting
+ * tf.loadLayersModel() attempt a full GET and throw.
  */
 export async function loadGestureSequenceModel(
   modelUrl = '/models/gesture_lstm/model.json',
@@ -38,12 +54,31 @@ export async function loadGestureSequenceModel(
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
+    let exists = true;
+    try {
+      const head = await fetch(modelUrl, { method: 'HEAD' });
+      exists = head.ok;
+    } catch {
+      exists = false;
+    }
+
+    if (!exists) {
+      modelKnownAbsent = true;
+      // eslint-disable-next-line no-console
+      console.info(
+        'No LSTM model deployed yet at', modelUrl,
+        '— using DTW template-match fallback instead. This is expected until a model is trained and exported (see scripts/train_gesture_lstm.py).'
+      );
+      return;
+    }
+
     const [loadedModel, labelsResp] = await Promise.all([
       tf.loadLayersModel(modelUrl),
       fetch(labelsUrl).then((r) => r.json()),
     ]);
     model = loadedModel;
     labelList = labelsResp as string[];
+    modelKnownAbsent = false;
   })();
 
   return loadingPromise;
