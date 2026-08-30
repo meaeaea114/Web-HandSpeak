@@ -17,6 +17,8 @@ const INDEX_MCP = 5;
 const PINKY_MCP = 17;
 const MIDDLE_MCP = 9;
 
+export const FEATURE_VECTOR_LENGTH = 126;
+
 /**
  * Computes real, signed orientation angles from one hand's 21 landmarks.
  *
@@ -78,9 +80,63 @@ function clampScore(v: number): number {
 }
 
 /**
+ * Re-centers and rescales a raw 126-length feature vector so it is invariant
+ * to where in the frame the primary hand is, and how close to the camera it
+ * is: every point (across BOTH hand slots) is shifted so the primary hand's
+ * wrist (landmark 0 of hand slot 0) sits at the origin, then divided by the
+ * primary hand's own size (wrist -> middle-finger-MCP distance, landmark 9).
+ *
+ * Without this, two identical signs performed at different distances from
+ * the camera, or in different parts of the frame, would produce different
+ * stored feature vectors and would be scored as different by DTW and by any
+ * trained LSTM. This is the SAME transform that was previously implemented
+ * only inside gesture-template-match.ts for live DTW comparison (see that
+ * file's normalizeSequence) — it is now applied once, here, at the point
+ * every feature vector is created, so every downstream consumer (Firestore
+ * storage, dataset export, LSTM training, LSTM inference, DTW) works from an
+ * identical representation. The transform is idempotent (re-applying it to
+ * an already-normalized vector is a no-op), so it is always safe to apply
+ * again defensively — e.g. in the offline dataset exporter — without risk of
+ * double-transforming real data.
+ *
+ * Deliberately normalizes relative to the PRIMARY hand only (not each hand
+ * independently): for two-handed signs, the position of hand 2 relative to
+ * hand 1 can be part of what the sign means, so hand 2's coordinates are
+ * shifted/scaled using hand 1's wrist/scale rather than their own.
+ */
+export function normalizeFeatureVector(vector: number[]): number[] {
+  if (vector.length !== FEATURE_VECTOR_LENGTH) {
+    throw new Error(`Expected a ${FEATURE_VECTOR_LENGTH}-length feature vector, got ${vector.length}`);
+  }
+
+  const wristX = vector[WRIST * 3];
+  const wristY = vector[WRIST * 3 + 1];
+  const wristZ = vector[WRIST * 3 + 2];
+
+  // Scale reference: distance from wrist to middle-finger MCP of the primary
+  // hand. If no hand was detected at all (vector is all zeros), this is 0
+  // and we fall back to 1 so we divide by 1, not 0 — the vector stays zero.
+  const midX = vector[MIDDLE_MCP * 3];
+  const midY = vector[MIDDLE_MCP * 3 + 1];
+  const scale = Math.hypot(midX - wristX, midY - wristY) || 1;
+
+  const normalized = new Array(vector.length);
+  for (let i = 0; i < vector.length; i += 3) {
+    normalized[i] = (vector[i] - wristX) / scale;
+    normalized[i + 1] = (vector[i + 1] - wristY) / scale;
+    normalized[i + 2] = (vector[i + 2] - wristZ) / scale;
+  }
+  return normalized;
+}
+
+/**
  * Flattens one frame's landmarks (up to 2 hands x 21 points x 3 coords = 126
- * features) into a fixed-length feature vector for sequence models. Missing
- * hands are zero-padded so every frame has identical shape.
+ * features) into a fixed-length, NORMALIZED feature vector for sequence
+ * models. Missing hands are zero-padded so every frame has identical shape.
+ * Normalization (see normalizeFeatureVector above) is applied before this
+ * function returns, so every caller — training capture, DTW, and (once
+ * trained) the LSTM — already receives translation/scale-invariant features
+ * with no extra step required.
  */
 export function landmarksToFeatureVector(landmarksPerHand: Landmark[][]): number[] {
   const FEATURES_PER_HAND = 21 * 3;
@@ -97,7 +153,5 @@ export function landmarksToFeatureVector(landmarksPerHand: Landmark[][]): number
     }
   }
 
-  return vector; // length 126, always
+  return normalizeFeatureVector(vector); // length 126, always
 }
-
-export const FEATURE_VECTOR_LENGTH = 126;

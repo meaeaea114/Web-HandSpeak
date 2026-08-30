@@ -11,7 +11,7 @@
  * for (or blend it with) gesture-sequence-model.ts's LSTM prediction —
  * both consume the same 126-length feature vectors, so nothing else changes.
  */
-import { FEATURE_VECTOR_LENGTH } from './posture-metrics';
+import { FEATURE_VECTOR_LENGTH, normalizeFeatureVector } from './posture-metrics';
 
 export interface TemplateMatchResult {
   isCorrect: boolean;
@@ -19,33 +19,18 @@ export interface TemplateMatchResult {
   bestReferenceIndex: number;
 }
 
-const WRIST_INDEX = 0; // landmark 0 in each 21-point hand block
-
 /**
- * Normalizes a sequence so matching is invariant to where in the frame the
- * hand is, and how close to the camera it is: every frame is re-centered on
- * the wrist and scaled by the hand's own size. Without this, two identical
- * signs performed at different distances/positions would score as different.
+ * Normalizes every frame of a sequence so matching is invariant to where in
+ * the frame the hand is, and how close to the camera it is. Delegates to
+ * posture-metrics.ts's normalizeFeatureVector — the exact same transform
+ * used when a feature vector is first created (see landmarksToFeatureVector)
+ * — so training data, storage, and this live comparison always share one
+ * definition. Because that transform is idempotent, calling it again here on
+ * already-normalized frames (the normal case now) is a safe no-op; it only
+ * does real work if it's ever given an un-normalized sequence.
  */
 function normalizeSequence(sequence: number[][]): number[][] {
-  return sequence.map((frame) => {
-    const wristX = frame[WRIST_INDEX * 3];
-    const wristY = frame[WRIST_INDEX * 3 + 1];
-    const wristZ = frame[WRIST_INDEX * 3 + 2];
-
-    // scale = distance from wrist to middle-finger MCP (landmark 9) of hand 1
-    const midX = frame[9 * 3];
-    const midY = frame[9 * 3 + 1];
-    const scale = Math.hypot(midX - wristX, midY - wristY) || 1;
-
-    const normalized = new Array(frame.length);
-    for (let i = 0; i < frame.length; i += 3) {
-      normalized[i] = (frame[i] - wristX) / scale;
-      normalized[i + 1] = (frame[i + 1] - wristY) / scale;
-      normalized[i + 2] = (frame[i + 2] - wristZ) / scale;
-    }
-    return normalized;
-  });
+  return sequence.map((frame) => normalizeFeatureVector(frame));
 }
 
 function frameDistance(a: number[], b: number[]): number {

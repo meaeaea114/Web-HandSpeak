@@ -15,8 +15,15 @@ Each sample is a (30, 126) sequence: 30 frames, each frame a flattened
 (21 * 3 * 2 = 126), zero-padded when only one hand is present.
 This must exactly match `landmarksToFeatureVector` in posture-metrics.ts.
 
+Coordinates are wrist-centered and scale-normalized relative to the primary
+hand (see posture-metrics.ts:normalizeFeatureVector) — NOT raw MediaPipe
+image coordinates. training_data/*.npy is produced by
+scripts/export-training-dataset.js, which applies that exact same transform,
+so this script never needs to normalize anything itself.
+
 Usage:
     pip install -r requirements.txt
+    node export-training-dataset.js   # from repo root: builds training_data/
     python train_gesture_lstm.py
     # then convert to TF.js format:
     tensorflowjs_converter --input_format=keras \

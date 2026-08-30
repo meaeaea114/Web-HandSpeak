@@ -744,14 +744,6 @@ function ContentManagementComponent() {
     };
   }, [mySubmissions, activeCategory]);
 
-  const globalSubmissionCounts = useMemo(() => {
-    return {
-      pending: mySubmissions.filter((s) => s.status === 'pending').length,
-      approved: mySubmissions.filter((s) => s.status === 'approved').length,
-      rejected: mySubmissions.filter((s) => s.status === 'rejected').length,
-    };
-  }, [mySubmissions]);
-
   const filteredActivities = useMemo(() => {
     return activities.filter((act) => {
       const matchSearch =
@@ -1106,32 +1098,8 @@ function ContentManagementComponent() {
             </div>
           </div>
 
-          {/* GLOBAL SUBMISSIONS OVERVIEW (NEW) */}
-          <div className="w-full">
-            <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5 mb-2">
-              <Clock className="h-4 w-4" /> Global Submission Status
-            </h2>
-            <div className="grid grid-cols-3 gap-3.5">
-              <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
-                <Clock className="h-6 w-6 text-amber-500 mb-1" />
-                <span className="text-2xl font-black text-amber-700">{globalSubmissionCounts.pending}</span>
-                <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pending Approval</span>
-              </div>
-              <div className="bg-emerald-50 border-2 border-emerald-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
-                <CheckCircle2 className="h-6 w-6 text-emerald-500 mb-1" />
-                <span className="text-2xl font-black text-emerald-700">{globalSubmissionCounts.approved}</span>
-                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Approved Content</span>
-              </div>
-              <div className="bg-rose-50 border-2 border-rose-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
-                <XCircle className="h-6 w-6 text-rose-500 mb-1" />
-                <span className="text-2xl font-black text-rose-700">{globalSubmissionCounts.rejected}</span>
-                <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Action Required (Rejected)</span>
-              </div>
-            </div>
-          </div>
-
           {/* CATEGORIES PICKER */}
-          <div className="w-full space-y-2 mt-2">
+          <div className="w-full space-y-2">
             <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
               <Layers className="h-4 w-4" /> Learning Modules
             </h2>
