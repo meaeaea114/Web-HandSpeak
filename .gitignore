@@ -17,3 +17,8 @@ service-account.json
 .env.local
 .env
 
+venv/
+pip-temp/
+pip-cache/
+__pycache__/
+*.pyc

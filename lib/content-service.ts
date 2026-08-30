@@ -50,7 +50,10 @@ export interface ContentSubmission {
   image_url?: string;
   toleranceBounds?: ToleranceBounds;
   trainingSequences?: number[][][];
+  sequenceLength?: number;
+  frameLength?: number;
   gestureKey?: string;
+  contentId?: string;
   status: SubmissionStatus;
   isArchived?: boolean;
   archivedAt?: any;
@@ -103,15 +106,40 @@ export interface PublishedActivityQuestion {
   archivedAt?: any;
 }
 
+// Sequence shape captured by the real MediaPipe/landmark pipeline
+// (see lib/posture-metrics.ts + lib/gesture-sequence-model.ts):
+// one sample = TRAINING_SEQUENCE_LENGTH frames, each frame a
+// TRAINING_FEATURE_LENGTH-length flattened landmark feature vector.
+// Keep these in sync with SEQUENCE_LENGTH (gesture-sequence-model.ts) and
+// FEATURE_VECTOR_LENGTH (posture-metrics.ts) — duplicated here as plain
+// constants so this file never has to import the TF.js/MediaPipe client libs.
+export const TRAINING_SEQUENCE_LENGTH = 30;
+export const TRAINING_FEATURE_LENGTH = 126;
+
+export type TrainingDatasetStatus =
+  | 'no_dataset'
+  | 'collecting'
+  | 'dataset_ready'
+  | 'pending_approval'
+  | 'approved_awaiting_model';
+
 export interface GestureTrainingData {
   id: string;
   gestureKey: string;
   label: string;
   category: string;
+  contentId?: string;
   sampleCount: number;
   accuracyThreshold: number;
   landmarksVector?: number[];
   toleranceBounds: ToleranceBounds;
+  /** Real captured landmark sequences merged in on approval — used for DTW
+   *  matching in Practice and as the export source for offline LSTM training.
+   *  Capped (see MAX_STORED_SEQUENCES) to stay under Firestore's 1MB/doc limit. */
+  trainingSequences?: number[][][];
+  sequenceLength?: number;
+  frameLength?: number;
+  trainingStatus?: TrainingDatasetStatus;
   lastTrainedAt?: any;
   lastTrainedBy?: string;
 }
@@ -172,6 +200,31 @@ export const DEFAULT_TUTORIAL_LESSONS: Record<string, TutorialLesson[]> = {
     { id: 'cv_doctor', category: 'civic', symbol: 'Doctor', displayTitle: 'Doctor / Doktor', imageUrl: '/assets/pictures/doctor.jpg', gestureKey: 'doctor', description: 'Healthcare sign', expectedHands: 2 },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// Firestore does not support arrays that directly contain other arrays
+// (a "nested array" — e.g. number[][]). Our captured training data is
+// naturally number[][][] (samples x frames x features), which trips that
+// restriction two layers deep. These helpers wrap each frame in a plain
+// object so Firestore only ever sees "array of maps," never "array of
+// arrays," and unwrap it back to plain numeric arrays on read so every
+// other consumer (DTW matching, offline export, etc.) keeps working with
+// ordinary number[][][] and never has to know about this storage quirk.
+// ---------------------------------------------------------------------------
+function serializeSequences(sequences: number[][][]): any[] {
+  return sequences.map((sample) => ({
+    frames: sample.map((frame) => ({ f: frame })),
+  }));
+}
+
+function deserializeSequences(stored: any[] | undefined | null): number[][][] {
+  if (!stored || !Array.isArray(stored)) return [];
+  return stored.map((sample: any) => {
+    const frames = sample?.frames;
+    if (!Array.isArray(frames)) return [];
+    return frames.map((fr: any) => (Array.isArray(fr?.f) ? fr.f : []));
+  });
+}
 
 // 1. Audit / Activity Logging
 export async function logAdminAction(
@@ -304,6 +357,7 @@ export function getMyContentSubmissionsRealtime(
           questionText: data.questionText || data.question_text || '',
           correctAnswer: data.correctAnswer || data.correct_answer || '',
           imageUrl: data.imageUrl || data.image_url || '',
+          trainingSequences: data.trainingSequences ? deserializeSequences(data.trainingSequences) : undefined,
         } as ContentSubmission;
       });
       callback(items);
@@ -330,6 +384,7 @@ export function getAllContentSubmissionsRealtime(
           questionText: data.questionText || data.question_text || '',
           correctAnswer: data.correctAnswer || data.correct_answer || '',
           imageUrl: data.imageUrl || data.image_url || '',
+          trainingSequences: data.trainingSequences ? deserializeSequences(data.trainingSequences) : undefined,
         } as ContentSubmission;
       });
       callback(items);
@@ -392,15 +447,68 @@ export function subscribeToGestureTrainingData(
     where('category', '==', category)
   );
   return onSnapshot(q, (snapshot) => {
-    const list = snapshot.docs.map((d) => ({
-      id: d.id,
-      ...d.data(),
-    })) as GestureTrainingData[];
+    const list = snapshot.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        ...data,
+        trainingSequences: deserializeSequences(data.trainingSequences),
+      } as GestureTrainingData;
+    });
     callback(list);
   });
 }
 
+// Deterministic doc id for a gesture's training dataset. Kept as a plain
+// helper (rather than inlined in two places) so submission + approval always
+// agree on where a given content's dataset lives.
+export function buildGestureTrainingDocId(category: string, gestureKey: string): string {
+  return `${category}_${gestureKey.toLowerCase()}`;
+}
+
+/**
+ * Validates a set of captured training samples before they're allowed to be
+ * submitted. This is the guard that keeps a dataset from being accidentally
+ * saved empty, malformed, or short of the required sample count — see
+ * "CONTENT-SPECIFIC TRAINING" requirement: a dataset must belong to exactly
+ * one content item and must contain real, correctly-shaped sequences.
+ */
+export function validateTrainingSamples(
+  trainingSequences: number[][][] | undefined,
+  requiredSampleCount: number,
+  sequenceLength: number = TRAINING_SEQUENCE_LENGTH,
+  featureLength: number = TRAINING_FEATURE_LENGTH
+): { valid: boolean; error?: string } {
+  if (!trainingSequences || trainingSequences.length === 0) {
+    return { valid: false, error: 'No training samples were captured.' };
+  }
+  if (trainingSequences.length < requiredSampleCount) {
+    return {
+      valid: false,
+      error: `Only ${trainingSequences.length}/${requiredSampleCount} valid samples captured.`,
+    };
+  }
+  for (const sample of trainingSequences) {
+    if (!Array.isArray(sample) || sample.length !== sequenceLength) {
+      return { valid: false, error: `A captured sample does not have ${sequenceLength} frames.` };
+    }
+    for (const frame of sample) {
+      if (!Array.isArray(frame) || frame.length !== featureLength) {
+        return { valid: false, error: `A captured frame does not have ${featureLength} landmark features.` };
+      }
+      if (frame.some((v) => typeof v !== 'number' || Number.isNaN(v))) {
+        return { valid: false, error: 'A captured frame contains invalid (non-numeric) landmark data.' };
+      }
+    }
+  }
+  return { valid: true };
+}
+
 // 10. Submit Gesture Model Parameters to Admin for Approval (Persisting raw sequences for offline LSTM training)
+// contentId ties this dataset to the exact tutorial/content item it was
+// captured from (e.g. the "Kamusta" TutorialLesson.id), so the resulting
+// gesture_training_data document can never be confused with another sign's
+// dataset even if two signs happen to share a display symbol.
 export async function submitGestureParametersForApproval(
   gestureKey: string,
   category: string,
@@ -410,7 +518,8 @@ export async function submitGestureParametersForApproval(
   userId: string,
   userName: string,
   userEmail = '',
-  trainingSequences?: number[][][]
+  trainingSequences?: number[][][],
+  contentId?: string
 ) {
   return await addDoc(collection(db, 'content_submissions'), {
     category,
@@ -426,8 +535,13 @@ export async function submitGestureParametersForApproval(
     imageUrl,
     image_url: imageUrl,
     gestureKey,
+    contentId: contentId || null,
     toleranceBounds,
-    trainingSequences: trainingSequences ?? [],
+    // Firestore rejects arrays-of-arrays, so raw number[][][] is wrapped
+    // into array-of-maps form before being written — see serializeSequences.
+    trainingSequences: serializeSequences(trainingSequences ?? []),
+    sequenceLength: TRAINING_SEQUENCE_LENGTH,
+    frameLength: TRAINING_FEATURE_LENGTH,
     status: 'pending',
     isArchived: false,
     createdById: userId,
@@ -437,6 +551,24 @@ export async function submitGestureParametersForApproval(
     submittedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+}
+
+// 10b. Fetch the training dataset for one specific content item (one-time read).
+// This answers "give me the training dataset for Kamusta" precisely, without
+// relying on realtime listeners or category-wide scans.
+export async function getGestureTrainingDataForContent(
+  contentId: string
+): Promise<GestureTrainingData | null> {
+  const q = query(collection(db, 'gesture_training_data'), where('contentId', '==', contentId));
+  const snapshot = await getDocs(q);
+  if (snapshot.empty) return null;
+  const d = snapshot.docs[0];
+  const data = d.data();
+  return {
+    id: d.id,
+    ...data,
+    trainingSequences: deserializeSequences(data.trainingSequences),
+  } as GestureTrainingData;
 }
 
 // 11. Create dynamic category
@@ -574,21 +706,48 @@ export async function approveContentSubmission(
 
   if (isTrainingSync) {
     const gestureKey = sub.gestureKey || sub.correctAnswer || 'gesture';
-    const gestureDocId = `${sub.category}_${gestureKey.toLowerCase()}`;
+    const gestureDocId = buildGestureTrainingDocId(sub.category, gestureKey);
     const gestureDocRef = doc(db, 'gesture_training_data', gestureDocId);
 
     const existingSnap = await getDoc(gestureDocRef);
-    const prevSamples = existingSnap.exists() ? existingSnap.data().sampleCount || 0 : 0;
+    const existingData = existingSnap.exists() ? (existingSnap.data() as any) : null;
+    const prevSamples = existingData?.sampleCount || 0;
+
+    // Both the incoming submission's trainingSequences and any existing
+    // stored dataset are in the wrapped (Firestore-safe) form at this point
+    // — merge them as raw wrapped objects, no need to round-trip through
+    // deserialize/serialize since neither side needs numeric access here.
+    const newSequencesWrapped: any[] = (sub as any).trainingSequences || [];
+    const existingSequencesWrapped: any[] = existingData?.trainingSequences || [];
+
+    // Merge real captured sequences (not fabricated) so the dataset can be
+    // exported for offline LSTM training and used for DTW matching in
+    // Practice. Capped to protect the 1MB Firestore document limit — once
+    // the cap is hit, sampleCount keeps growing but only a representative
+    // window of raw sequences is retained in this document.
+    const MAX_STORED_SEQUENCES = 60;
+    const mergedSequencesWrapped = [...existingSequencesWrapped, ...newSequencesWrapped].slice(
+      -MAX_STORED_SEQUENCES
+    );
 
     await setDoc(
       gestureDocRef,
       {
         gestureKey,
         category: sub.category,
+        contentId: sub.contentId || existingData?.contentId || null,
         label: sub.questionText.replace('Calibrate Model: ', ''),
-        sampleCount: prevSamples + (sub.trainingSequences?.length || 1),
+        sampleCount: prevSamples + (newSequencesWrapped.length || 1),
         accuracyThreshold: 85,
         toleranceBounds: sub.toleranceBounds || { rotate: 85, tilt: 75, distance: 60, switchHands: 50 },
+        trainingSequences: mergedSequencesWrapped,
+        sequenceLength: sub.sequenceLength || TRAINING_SEQUENCE_LENGTH,
+        frameLength: sub.frameLength || TRAINING_FEATURE_LENGTH,
+        // Honest status: approval only confirms the dataset was reviewed and
+        // synced — it does NOT mean a model has actually been trained. The
+        // LSTM is trained offline (scripts/train_gesture_lstm.py) and its
+        // output files must be dropped into public/models/gesture_lstm/.
+        trainingStatus: 'approved_awaiting_model',
         lastTrainedAt: serverTimestamp(),
         lastTrainedBy: sub.createdByName || 'Faculty Member',
         approvedBy: adminName,

@@ -26,6 +26,13 @@
 //       Prescriptive → "What should the teacher do?"
 //   There is NO function that summarizes all four pillars together.
 //   Each pillar is cached and refreshed independently.
+//
+// NOTE ON FAILURE HANDLING: if the Anthropic API is unavailable or
+// returns a malformed response, this engine returns ok:false rather
+// than silently substituting a templated "insight" that looks
+// AI-generated but isn't. The deterministic analytics for every pillar
+// remain fully visible in the UI regardless of AI availability — only
+// the AI *interpretation* panel shows an error/retry state.
 
 import { getAdminDb } from './firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -194,11 +201,10 @@ async function writeCache(cacheKey: string, insight: unknown): Promise<number> {
 // ANTHROPIC API CALL
 // ==========================================
 
-async function callClaude(system: string, userPrompt: string, maxTokens = 900): Promise<string | null> {
+export async function callClaude(system: string, userPrompt: string, maxTokens = 900): Promise<{ text: string | null; failureReason: string | null }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error('ANTHROPIC_API_KEY is not configured on the server.');
-    return null;
+    return { text: null, failureReason: 'not_configured' };
   }
 
   try {
@@ -212,7 +218,12 @@ async function callClaude(system: string, userPrompt: string, maxTokens = 900): 
       body: JSON.stringify({
         model: DEFAULT_MODEL,
         max_tokens: maxTokens,
-        temperature: 0.2,
+        // Sonnet 5+ rejects non-default temperature/top_p/top_k with a 400,
+        // and runs adaptive thinking by default (thinking tokens count
+        // against max_tokens). Neither is needed for deterministic
+        // structured-JSON interpretation, so thinking is explicitly
+        // disabled — this also avoids truncating the JSON output.
+        thinking: { type: 'disabled' },
         system,
         messages: [{ role: 'user', content: userPrompt }],
       }),
@@ -221,15 +232,56 @@ async function callClaude(system: string, userPrompt: string, maxTokens = 900): 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       console.error(`Anthropic API error (${response.status}):`, errText);
-      return null;
+      let upstreamMessage = '';
+      try {
+        upstreamMessage = JSON.parse(errText)?.error?.message || '';
+      } catch {
+        // ignore parse failure, fall through to generic reason
+      }
+      if (response.status === 401) return { text: null, failureReason: 'auth_failed' };
+      if (response.status === 429) return { text: null, failureReason: 'rate_limited' };
+      if (upstreamMessage.toLowerCase().includes('credit balance')) return { text: null, failureReason: 'insufficient_credits' };
+      return { text: null, failureReason: upstreamMessage || `upstream_error_${response.status}` };
     }
 
     const data = await response.json();
+
+    if (data?.stop_reason === 'refusal') {
+      return { text: null, failureReason: 'refused' };
+    }
+
     const textBlock = Array.isArray(data?.content) ? data.content.find((b: any) => b.type === 'text') : null;
-    return textBlock?.text ?? null;
+    if (!textBlock?.text) {
+      return { text: null, failureReason: data?.stop_reason === 'max_tokens' ? 'truncated' : 'empty_response' };
+    }
+    return { text: textBlock.text, failureReason: null };
   } catch (err) {
     console.error('Anthropic API request failed:', err);
-    return null;
+    return { text: null, failureReason: 'network_error' };
+  }
+}
+
+export function describeFailure(reason: string | null, pillar: AnalyticsPillar): string {
+  switch (reason) {
+    case 'not_configured':
+      return 'The AI analytics service is not configured on the server (missing ANTHROPIC_API_KEY).';
+    case 'insufficient_credits':
+      return 'The Anthropic API account has run out of credits. Add credits or a billing method at console.anthropic.com to enable AI insights.';
+    case 'auth_failed':
+      return 'The server\'s Anthropic API key was rejected. Check that ANTHROPIC_API_KEY is valid.';
+    case 'rate_limited':
+      return 'The AI analytics service is rate-limited right now. Please try again shortly.';
+    case 'refused':
+      return `The AI declined to analyze this ${pillar} request. Try refreshing, or review the underlying data for anything unusual.`;
+    case 'truncated':
+      return `The AI ${pillar} interpretation was cut off before completing. Try refreshing.`;
+    case 'empty_response':
+      return `The AI ${pillar} interpretation service returned an empty response. Try refreshing.`;
+    case null:
+    case undefined:
+      return `The AI ${pillar} interpretation service returned an unreadable or malformed response.`;
+    default:
+      return `The AI ${pillar} interpretation service failed: ${reason}`;
   }
 }
 
@@ -487,7 +539,7 @@ async function runPillarInsight<P extends AnalyticsPillar>(
   const system = PILLAR_PROMPTS[pillar](scope);
   const userPrompt = `Here is the ${pillar} data for this ${scope === 'cohort' ? 'cohort/class' : 'student'}:\n\n${JSON.stringify(payload, null, 2)}`;
 
-  const raw = await callClaude(system, userPrompt, pillar === 'prescriptive' ? 1100 : 700);
+  const { text: raw, failureReason } = await callClaude(system, userPrompt, pillar === 'prescriptive' ? 1600 : 1200);
   const parsed = extractJson<any>(raw);
 
   if (!parsed || !PILLAR_VALIDATORS[pillar](parsed)) {
@@ -496,9 +548,7 @@ async function runPillarInsight<P extends AnalyticsPillar>(
       data: null,
       cached: false,
       generatedAt: null,
-      error: process.env.ANTHROPIC_API_KEY
-        ? `The AI ${pillar} interpretation service returned an unreadable or malformed response.`
-        : `The AI analytics service is not configured on the server (missing ANTHROPIC_API_KEY).`,
+      error: describeFailure(failureReason, pillar),
     };
   }
 

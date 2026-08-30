@@ -18,7 +18,6 @@ import {
   X,
   Send,
   Tag,
-  HelpCircle,
   Layers,
   Edit3,
   Clock,
@@ -26,21 +25,17 @@ import {
   XCircle,
   Eye,
   Type,
-  Filter,
   ChevronDown,
   Play,
   Camera,
   VideoOff,
   Zap,
   Smartphone,
-  Sliders,
   Save,
-  Compass,
-  Move,
-  RotateCw,
-  HandMetal,
   BookOpen,
   Trophy,
+  ArrowRightLeft,
+  CheckCircle,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -66,6 +61,26 @@ import {
   uploadActivityImage,
 } from '@/lib/content-service';
 
+// Real MediaPipe detection + smoothed orientation + take-based LSTM sequence capture/scoring
+import { getHandLandmarker, detectHandsInFrame, type Landmark } from '@/lib/hand-landmarker';
+import {
+  computeHandOrientation,
+  computeFramingQuality,
+  landmarksToFeatureVector,
+  type HandOrientation,
+  type FramingQuality,
+} from '@/lib/posture-metrics';
+import { MultiChannelSmoother } from '@/lib/signal-smoothing';
+import {
+  loadGestureSequenceModel,
+  isGestureModelReady,
+  FrameSequenceBuffer,
+  predictGesture,
+  type GesturePrediction,
+} from '@/lib/gesture-sequence-model';
+import { matchGestureTemplate, type TemplateMatchResult } from '@/lib/gesture-template-match';
+import { GestureRecordingSession } from '@/lib/gesture-recording-session';
+
 type ContentScreen = 'dashboard' | 'wizard_question' | 'wizard_answers';
 type CategoryWorkspaceTab = 'tutorials_practice' | 'activity_levels';
 type SimulatorMode = 'tutorial' | 'practice' | 'continuous' | 'train';
@@ -85,19 +100,16 @@ interface FormState {
   submissionId?: string;
 }
 
-interface LivePredictionState {
-  label: string;
-  confidence: number;
-  isCorrect: boolean;
-}
-
 const ACTIVITY_TYPES = [
   { id: 'sign_to_text', label: 'Sign to Text (Level 1)' },
   { id: 'text_to_sign', label: 'Text to Sign (Level 2)' },
   { id: 'solve_to_sign', label: 'Math / Word Complete (Level 3)' },
+  { id: 'multiple_choice', label: 'Multiple Choice (Standard)' },
+  { id: 'fill_in_the_blank', label: 'Fill in the Blanks / Word Completion' },
   { id: 'true_false', label: 'True or False' },
-  { id: 'pecs', label: 'PECS' },
-  { id: 'matching_type', label: 'Matching Type' },
+  { id: 'matching_type', label: 'Matching Pairs' },
+  { id: 'sequence_order', label: 'Sequence / Ordering' },
+  { id: 'pecs', label: 'Picture Exchange (PECS)' },
   { id: 'custom', label: 'Custom Activity Type...' },
 ];
 
@@ -114,7 +126,9 @@ const EMPTY_FORM: FormState = {
   image_url: '',
 };
 
-const REQUIRED_VALID_SAMPLES = 5;
+const DETECTION_INTERVAL_MS = 120; // ~8 detections/sec — plenty for landmark tracking
+const ORIENTATION_SMOOTHING_ALPHA = 0.25; // lower = smoother/slower, higher = more responsive/jittery
+const REQUIRED_TAKES = 15; // how many full-sequence repetitions of a sign we want per dataset
 
 function parseDifficultyLabel(levelStr?: string): { label: string; color: string } {
   if (!levelStr) return { label: 'Easy', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
@@ -138,8 +152,8 @@ function resolveImagePath(rawPath?: string): string[] {
     `/assets/pictures/${filename}`,
     `/assets/pictures/${nameWithoutExt}.jpg`,
     `/assets/pictures/${nameWithoutExt}.png`,
-    `/assets/pictures/${nameWithoutExt}.toUpperCase()}.jpg`,
-    `/assets/pictures/${nameWithoutExt}.toUpperCase()}.png`,
+    `/assets/pictures/${nameWithoutExt.toUpperCase()}.jpg`,
+    `/assets/pictures/${nameWithoutExt.toUpperCase()}.png`,
     `/assets/${clean}`,
     `/images/${filename}`,
   ];
@@ -296,27 +310,25 @@ function ContentManagementComponent() {
   const [cameraActive, setCameraActive] = useState(false);
   const [trainingSaving, setTrainingSaving] = useState(false);
 
-  // Real-time Posture Metrics from Camera Feed
-  const [livePosture, setLivePosture] = useState({
-    rotate: 78,
-    tilt: 90,
-    distance: 80,
-    switchHands: 81,
-  });
-
-  // Live gesture-recognition prediction (Practice / Continuous modes)
-  const [livePrediction, setLivePrediction] = useState<LivePredictionState | null>(null);
-
-  // Readiness flags for any ML models used by the simulator
-  const [modelsReady, setModelsReady] = useState<{ gestureModel: boolean }>({
-    gestureModel: false,
-  });
-
-  const [guidanceTip, setGuidanceTip] = useState<string>('Align your hand inside the target circle');
-  const [samplesCaptured, setSamplesCaptured] = useState<number>(4);
+  // Real-time model readiness + smoothed orientation / framing + take-based gesture recording
+  const [modelsReady, setModelsReady] = useState({ landmarker: false, gestureModel: false });
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+  const [liveOrientation, setLiveOrientation] = useState<HandOrientation>({ rollDeg: 0, pitchDeg: 0, yawDeg: 0 });
+  const [liveFraming, setLiveFraming] = useState<FramingQuality>({ distance: 0, switchHands: 0 });
+  const [handDetected, setHandDetected] = useState(false);
+  const [isRecordingTake, setIsRecordingTake] = useState(false);
+  const [takesCaptured, setTakesCaptured] = useState(0);
+  const [captureComplete, setCaptureComplete] = useState(false);
+  const [livePrediction, setLivePrediction] = useState<GesturePrediction | null>(null);
+  const [templateMatch, setTemplateMatch] = useState<TemplateMatchResult | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sequenceBufferRef = useRef<FrameSequenceBuffer>(new FrameSequenceBuffer());
+  const captureSessionRef = useRef<GestureRecordingSession>(new GestureRecordingSession(REQUIRED_TAKES));
+  const orientationSmootherRef = useRef<MultiChannelSmoother<'roll' | 'pitch' | 'yaw'>>(
+    new MultiChannelSmoother(['roll', 'pitch', 'yaw'], ORIENTATION_SMOOTHING_ALPHA)
+  );
 
   // Form Wizard State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -330,7 +342,7 @@ function ContentManagementComponent() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // New Tutorial Sign Modal State + Drag/Drop Image Upload
+  // New Tutorial Sign Modal State
   const [showNewSignModal, setShowNewSignModal] = useState(false);
   const [newSignSymbol, setNewSignSymbol] = useState('');
   const [newSignTitle, setNewSignTitle] = useState('');
@@ -443,72 +455,159 @@ function ContentManagementComponent() {
     return () => URL.revokeObjectURL(url);
   }, [newSignFile]);
 
-  // Webcam stream handler
+  // Load ML Models
   useEffect(() => {
-    if (selectedLessonIndex !== null && (simulatorMode === 'practice' || simulatorMode === 'continuous' || simulatorMode === 'train')) {
-      // Reset prediction/model state whenever we (re)enter a live-camera mode
-      setLivePrediction(null);
-      setModelsReady({ gestureModel: false });
+    let cancelled = false;
 
-      navigator.mediaDevices
-        ?.getUserMedia({ video: { width: 400, height: 400, facingMode: 'user' } })
-        .then((stream) => {
-          streamRef.current = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          setCameraActive(true);
-          // Simulate model warm-up; replace with real model-load signal when wired up.
-          setModelsReady({ gestureModel: true });
-        })
-        .catch((err) => {
-          console.warn('Camera access unavailable:', err);
-          setCameraActive(false);
-        });
+    getHandLandmarker()
+      .then(() => {
+        if (!cancelled) setModelsReady((prev) => ({ ...prev, landmarker: true }));
+      })
+      .catch((err) => {
+        console.error('Failed to load hand landmarker:', err);
+        if (!cancelled) setModelLoadError('Hand tracking failed to load. Check your connection and refresh.');
+      });
 
-      const interval = setInterval(() => {
-        const randRotate = Math.floor(75 + Math.random() * 20);
-        const randTilt = Math.floor(70 + Math.random() * 25);
-        const randDistance = Math.floor(78 + Math.random() * 20);
-        const randHands = Math.floor(80 + Math.random() * 19);
+    loadGestureSequenceModel()
+      .then(() => {
+        if (!cancelled) setModelsReady((prev) => ({ ...prev, gestureModel: true }));
+      })
+      .catch((err) => {
+        // Non-fatal: posture guidance still works without the LSTM classifier,
+        // it just won't be able to score sign/phrase correctness on its own —
+        // the DTW template-match fallback below still provides scoring once a
+        // reference sample has been approved.
+        console.warn('Gesture LSTM model unavailable — template-match fallback active:', err);
+      });
 
-        setLivePosture({
-          rotate: randRotate,
-          tilt: randTilt,
-          distance: randDistance,
-          switchHands: randHands,
-        });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-        setSamplesCaptured((prev) => Math.min(prev + 1, REQUIRED_VALID_SAMPLES));
-
-        // Placeholder live-prediction simulation for practice/continuous modes.
-        // Replace this block with a real inference call once the gesture model is wired up.
-        if ((simulatorMode === 'practice' || simulatorMode === 'continuous') && activeLessonRef.current) {
-          const confidence = 0.6 + Math.random() * 0.4;
-          setLivePrediction({
-            label: activeLessonRef.current.displayTitle,
-            confidence,
-            isCorrect: confidence > 0.75,
-          });
-        }
-      }, 1200);
-
-      return () => {
-        clearInterval(interval);
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-        }
-      };
-    } else {
+  // Webcam activation + REAL per-frame detection (smoothed orientation, framing,
+  // LSTM prediction, DTW template-match fallback, and take-based gesture recording)
+  useEffect(() => {
+    if (selectedLessonIndex === null || !(simulatorMode === 'practice' || simulatorMode === 'continuous' || simulatorMode === 'train')) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
       setCameraActive(false);
-      setSamplesCaptured(0);
+      sequenceBufferRef.current.clear();
+      orientationSmootherRef.current.reset();
       setLivePrediction(null);
-      setModelsReady({ gestureModel: false });
+      setTemplateMatch(null);
+      setHandDetected(false);
+      return;
     }
-  }, [selectedLessonIndex, simulatorMode]);
+
+    // Fresh recording session each time Train mode is (re)entered so a
+    // previous lesson's progress never bleeds into this one.
+    if (simulatorMode === 'train') {
+      captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
+      setTakesCaptured(0);
+      setCaptureComplete(false);
+      setIsRecordingTake(false);
+    }
+
+    let detectionInterval: ReturnType<typeof setInterval> | null = null;
+    let disposed = false;
+
+    navigator.mediaDevices
+      ?.getUserMedia({ video: { width: 400, height: 400, facingMode: 'user' } })
+      .then((stream) => {
+        if (disposed) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setCameraActive(true);
+
+        detectionInterval = setInterval(async () => {
+          if (!videoRef.current || !modelsReady.landmarker) return;
+          const targetLesson = currentLessons[selectedLessonIndex];
+          if (!targetLesson) return;
+
+          try {
+            const landmarker = await getHandLandmarker();
+            const result = detectHandsInFrame(landmarker, videoRef.current, performance.now());
+
+            const landmarksPerHand: Landmark[][] = result
+              ? result.landmarks.map((hand) => hand.map((p) => ({ x: p.x, y: p.y, z: p.z })))
+              : [];
+
+            setHandDetected(landmarksPerHand.length > 0);
+
+            if (landmarksPerHand.length === 0) {
+              return;
+            }
+
+            const expectedHands = (targetLesson as any).expectedHands ?? 1;
+            const framing = computeFramingQuality(landmarksPerHand, expectedHands);
+            setLiveFraming(framing);
+
+            // Raw orientation, then smoothed — this is what fixes the
+            // "metrics randomly move" jitter: we display/act on the
+            // smoothed values, not the raw per-frame estimate.
+            const rawOrientation = computeHandOrientation(landmarksPerHand[0]);
+            const smoothed = orientationSmootherRef.current.update({
+              roll: rawOrientation.rollDeg,
+              pitch: rawOrientation.pitchDeg,
+              yaw: rawOrientation.yawDeg,
+            });
+            const orientation: HandOrientation = {
+              rollDeg: smoothed.roll,
+              pitchDeg: smoothed.pitch,
+              yawDeg: smoothed.yaw,
+            };
+            setLiveOrientation(orientation);
+
+            // Rolling buffer of the last SEQUENCE_LENGTH frames — always
+            // tracked regardless of mode, so a "Stop & Save" click during
+            // Train mode captures the motion leading up to that moment,
+            // and Practice/Continuous can run live LSTM prediction off it.
+            const featureVector = landmarksToFeatureVector(landmarksPerHand);
+            sequenceBufferRef.current.push(featureVector);
+
+            if (isGestureModelReady()) {
+              const prediction = predictGesture(sequenceBufferRef.current, targetLesson.symbol);
+              if (prediction) setLivePrediction(prediction);
+            }
+
+            // DTW template-match fallback: gives real correctness feedback
+            // from the very first approved training sample, no LSTM
+            // training required. Runs independently of the LSTM above.
+            const referenceSequences = (activeTrainingDoc as any)?.trainingSequences as
+              | number[][][]
+              | undefined;
+            if (sequenceBufferRef.current.isFull() && referenceSequences?.length) {
+              const match = matchGestureTemplate(sequenceBufferRef.current.snapshot(), referenceSequences);
+              setTemplateMatch(match);
+            }
+          } catch (err) {
+            console.error('Detection frame error:', err);
+          }
+        }, DETECTION_INTERVAL_MS);
+      })
+      .catch((err) => {
+        console.warn('Camera access unavailable:', err);
+        setCameraActive(false);
+      });
+
+    return () => {
+      disposed = true;
+      if (detectionInterval) clearInterval(detectionInterval);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLessonIndex, simulatorMode, modelsReady.landmarker]);
 
   const currentLessons: TutorialLesson[] = useMemo(() => {
     const defaults = DEFAULT_TUTORIAL_LESSONS[activeCategory] || [];
@@ -523,12 +622,6 @@ function ContentManagementComponent() {
 
   const activeLesson = selectedLessonIndex !== null ? currentLessons[selectedLessonIndex] : null;
 
-  // Ref mirror of activeLesson so the interval closure above always reads the latest value
-  const activeLessonRef = useRef<TutorialLesson | null>(null);
-  useEffect(() => {
-    activeLessonRef.current = activeLesson;
-  }, [activeLesson]);
-
   const activeTrainingDoc = useMemo(() => {
     if (!activeLesson) return null;
     return gestureTrainingList.find(
@@ -536,11 +629,68 @@ function ContentManagementComponent() {
     );
   }, [activeLesson, gestureTrainingList]);
 
-  const overallQuality = useMemo(() => {
-    return Math.round(
-      (livePosture.rotate + livePosture.tilt + livePosture.distance + livePosture.switchHands) / 4
-    );
-  }, [livePosture]);
+  /** Snapshots the current rolling buffer as one completed take. */
+  const handleSaveTake = () => {
+    if (!sequenceBufferRef.current.isFull()) {
+      alert('Keep signing for about a second — not enough frames captured yet.');
+      return;
+    }
+    captureSessionRef.current.addTake(sequenceBufferRef.current.snapshot());
+    const newCount = captureSessionRef.current.totalCaptured();
+    setTakesCaptured(newCount);
+    setCaptureComplete(captureSessionRef.current.isComplete);
+    setIsRecordingTake(false);
+    sequenceBufferRef.current.clear();
+  };
+
+  const handleSaveTrainingSample = async () => {
+    if (!activeLesson) return;
+    const session = captureSessionRef.current;
+    const takes = session.getAllTakes();
+
+    if (takes.length < 1) {
+      alert('Record at least one take before submitting.');
+      return;
+    }
+    if (!session.isComplete) {
+      if (
+        !confirm(
+          `Only ${takes.length}/${REQUIRED_TAKES} takes captured. Submit anyway with partial data?`
+        )
+      ) {
+        return;
+      }
+    }
+
+    setTrainingSaving(true);
+    try {
+      await submitGestureParametersForApproval(
+        activeLesson.symbol,
+        activeLesson.category,
+        activeLesson.displayTitle,
+        activeLesson.imageUrl,
+        { rotate: 100, tilt: 100, distance: liveFraming.distance, switchHands: liveFraming.switchHands },
+        user?.id || 'teacher',
+        user?.fullName || user?.name || 'Faculty Trainer',
+        user?.email || '',
+        takes // number[][][] — one entry per take, each a full temporal sequence for LSTM retraining
+      );
+      alert(
+        `Gesture training dataset for "${activeLesson.displayTitle}" submitted for Admin Approval! It will sync to the mobile app once approved.`
+      );
+      captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
+      setTakesCaptured(0);
+      setCaptureComplete(false);
+      setIsRecordingTake(false);
+      setSelectedLessonIndex(null);
+      setActiveTab('submissions');
+      setWorkspaceTab('activity_levels');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to submit gesture training parameters.');
+    } finally {
+      setTrainingSaving(false);
+    }
+  };
 
   const handleCreateNewTutorialSign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -576,45 +726,63 @@ function ContentManagementComponent() {
     }
   };
 
-  const handleSaveTrainingSample = async () => {
-    if (!activeLesson) return;
-    setTrainingSaving(true);
-    try {
-      await submitGestureParametersForApproval(
-        activeLesson.symbol,
-        activeLesson.category,
-        activeLesson.displayTitle,
-        activeLesson.imageUrl,
-        livePosture,
-        user?.id || 'teacher',
-        user?.fullName || user?.name || 'Faculty Trainer',
-        user?.email || ''
-      );
-      alert(
-        `Calibrated training dataset for "${activeLesson.displayTitle}" submitted for Admin Approval! It will sync to the mobile app once approved.`
-      );
-      setSelectedLessonIndex(null);
-      setActiveTab('submissions');
-      setWorkspaceTab('activity_levels');
-    } catch (err: any) {
-      alert(err?.message || 'Failed to submit gesture training parameters.');
-    } finally {
-      setTrainingSaving(false);
-    }
-  };
+  const categoryActivitiesCount = useMemo(() => {
+    return activities.filter((act) => act.category === activeCategory).length;
+  }, [activities, activeCategory]);
+
+  const categorySubmissionsCount = useMemo(() => {
+    return mySubmissions.filter((sub) => sub.category === activeCategory).length;
+  }, [mySubmissions, activeCategory]);
 
   const submissionCounts = useMemo(() => {
+    const catSubs = mySubmissions.filter((s) => s.category === activeCategory);
     return {
-      all: mySubmissions.length,
+      all: catSubs.length,
+      pending: catSubs.filter((s) => s.status === 'pending').length,
+      approved: catSubs.filter((s) => s.status === 'approved').length,
+      rejected: catSubs.filter((s) => s.status === 'rejected').length,
+    };
+  }, [mySubmissions, activeCategory]);
+
+  const globalSubmissionCounts = useMemo(() => {
+    return {
       pending: mySubmissions.filter((s) => s.status === 'pending').length,
       approved: mySubmissions.filter((s) => s.status === 'approved').length,
       rejected: mySubmissions.filter((s) => s.status === 'rejected').length,
     };
   }, [mySubmissions]);
 
-  const categoryActivities = useMemo(() => {
-    return activities.filter((act) => act.category === activeCategory);
-  }, [activities, activeCategory]);
+  const filteredActivities = useMemo(() => {
+    return activities.filter((act) => {
+      const matchSearch =
+        !searchQuery ||
+        act.question_text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        act.level?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchCat = act.category === activeCategory;
+      const matchDiff = selectedDifficultyFilter === 'all' || act.level?.toLowerCase().includes(selectedDifficultyFilter.toLowerCase());
+      return matchSearch && matchCat && matchDiff;
+    });
+  }, [activities, searchQuery, activeCategory, selectedDifficultyFilter]);
+
+  const filteredSubmissions = useMemo(() => {
+    const catSubs = mySubmissions.filter((s) => s.category === activeCategory);
+    return catSubs.filter((sub) => {
+      const matchSearch =
+        !searchQuery ||
+        sub.questionText?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        sub.status?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchDiff = selectedDifficultyFilter === 'all' || sub.difficulty === selectedDifficultyFilter;
+      const matchStatus = submissionStatusFilter === 'all' || sub.status === submissionStatusFilter;
+      return matchSearch && matchDiff && matchStatus;
+    });
+  }, [mySubmissions, activeCategory, searchQuery, selectedDifficultyFilter, submissionStatusFilter]);
+
+  // Derived Template Flags for Activity Wizards
+  const isMatchingType = formState.type === 'matching_type';
+  const isTrueFalse = formState.type === 'true_false';
+  const isSequenceOrder = formState.type === 'sequence_order';
+  const isFillInBlank = formState.type === 'fill_in_the_blank';
+  const isStandardMCQ = !isMatchingType && !isTrueFalse && !isSequenceOrder && !isFillInBlank;
 
   const openNewQuestion = () => {
     setEditingId(null);
@@ -624,6 +792,8 @@ function ContentManagementComponent() {
       level: `${activeCategory}_easy_1`,
       correctAnswerIndex: 0,
       correct_answer: '',
+      type: 'sign_to_text',
+      options: ['', '', '', ''],
     });
     setUploadedFile(null);
     setOptionFiles({});
@@ -718,7 +888,12 @@ function ContentManagementComponent() {
   const handleOptionFileUpload = (index: number, file: File) => {
     setOptionFiles((prev) => ({ ...prev, [index]: file }));
     const localBlob = URL.createObjectURL(file);
-    updateOptionValue(index, localBlob);
+    if (isMatchingType) {
+      const parts = formState.options[index]?.split('|||') || ['', ''];
+      updateOptionValue(index, `${localBlob}|||${parts[1] || ''}`);
+    } else {
+      updateOptionValue(index, localBlob);
+    }
   };
 
   const handleSubmitForApproval = async () => {
@@ -731,10 +906,36 @@ function ContentManagementComponent() {
       return;
     }
 
-    const resolvedCorrectAnswer = formState.options[formState.correctAnswerIndex]?.trim();
-    if (!resolvedCorrectAnswer) {
-      setSaveError('Please mark a valid choice as the correct answer.');
-      return;
+    let finalCorrectAnswer = formState.options[formState.correctAnswerIndex]?.trim();
+
+    if (isMatchingType) {
+      const validPairs = formState.options.filter(o => {
+        const [l, r] = o.split('|||');
+        return l?.trim() && r?.trim();
+      });
+      if (validPairs.length < 2) {
+        setSaveError('Please provide at least two complete matching pairs.');
+        return;
+      }
+      finalCorrectAnswer = 'MATCHING_SET';
+    } else if (isSequenceOrder) {
+      const validSteps = formState.options.filter(o => o.trim() !== '');
+      if (validSteps.length < 2) {
+        setSaveError('Please provide at least two steps for the sequence.');
+        return;
+      }
+      finalCorrectAnswer = 'SEQUENCE_SET';
+    } else if (isFillInBlank) {
+      if (!formState.correct_answer?.trim()) {
+        setSaveError('Please provide the Target Word / Pattern for the blanks.');
+        return;
+      }
+      finalCorrectAnswer = formState.correct_answer;
+    } else {
+      if (!finalCorrectAnswer) {
+        setSaveError('Please specify the correct answer.');
+        return;
+      }
     }
 
     setSaving(true);
@@ -750,12 +951,23 @@ function ContentManagementComponent() {
       const finalOptions = [...formState.options];
       for (let i = 0; i < finalOptions.length; i++) {
         if (optionFiles[i]) {
-          finalOptions[i] = await uploadActivityImage(optionFiles[i]);
+          const uploadedOptUrl = await uploadActivityImage(optionFiles[i]);
+          if (isMatchingType) {
+            const parts = finalOptions[i].split('|||');
+            finalOptions[i] = `${uploadedOptUrl}|||${parts[1] || ''}`;
+          } else {
+            finalOptions[i] = uploadedOptUrl;
+          }
         }
       }
 
       const finalType = formState.type === 'custom' ? formState.customType || 'custom_activity' : formState.type;
-      const finalCorrectAnswer = finalOptions[formState.correctAnswerIndex] || resolvedCorrectAnswer;
+
+      let finalCorrectAnswerVal = finalCorrectAnswer;
+      if (isMatchingType) finalCorrectAnswerVal = 'MATCHING_SET';
+      if (isSequenceOrder) finalCorrectAnswerVal = 'SEQUENCE_SET';
+      if (isFillInBlank) finalCorrectAnswerVal = formState.correct_answer || 'BLANK_SET';
+      if (isStandardMCQ || isTrueFalse) finalCorrectAnswerVal = finalOptions[formState.correctAnswerIndex] || finalCorrectAnswer;
 
       const input = {
         category: formState.category,
@@ -763,8 +975,8 @@ function ContentManagementComponent() {
         type: finalType,
         level: formState.level,
         questionText: formState.question_text,
-        correctAnswer: finalCorrectAnswer,
-        options: finalOptions.filter((opt) => opt.trim() !== ''),
+        correctAnswer: finalCorrectAnswerVal,
+        options: finalOptions.filter((opt) => opt.trim() !== '' && opt.trim() !== '|||'),
         imageUrl: finalImageUrl,
         activityQuestionId: formState.activityQuestionId,
       };
@@ -825,14 +1037,17 @@ function ContentManagementComponent() {
       return {
         ...prev,
         options: next,
-        correct_answer: index === prev.correctAnswerIndex ? val : (prev.correct_answer || ''),
+        correct_answer: (isMatchingType || isSequenceOrder || isFillInBlank) ? prev.correct_answer : (index === prev.correctAnswerIndex ? val : (prev.correct_answer || '')),
       };
     });
   };
 
   const addOptionField = () => {
-    if (saving || formState.options.length >= 6) return;
-    setFormState((prev) => ({ ...prev, options: [...prev.options, ''] }));
+    if (saving || formState.options.length >= 8) return;
+    setFormState((prev) => ({
+      ...prev,
+      options: [...prev.options, isMatchingType ? '|||' : '']
+    }));
   };
 
   const removeOptionField = (index: number) => {
@@ -847,7 +1062,7 @@ function ContentManagementComponent() {
         ...prev,
         options: nextOptions,
         correctAnswerIndex: nextCorrectIndex,
-        correct_answer: nextOptions[nextCorrectIndex] || '',
+        correct_answer: (isMatchingType || isSequenceOrder || isFillInBlank) ? prev.correct_answer : (nextOptions[nextCorrectIndex] || ''),
       };
     });
   };
@@ -888,19 +1103,35 @@ function ContentManagementComponent() {
                 <Tag className="h-3.5 w-3.5" />
                 New Category
               </button>
+            </div>
+          </div>
 
-              <button
-                onClick={openNewQuestion}
-                className="inline-flex items-center gap-1.5 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black px-5 py-2.5 rounded-full text-xs uppercase tracking-wider shadow-sm active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
-              >
-                <Plus className="h-4 w-4 stroke-[3]" />
-                New Activity Quiz
-              </button>
+          {/* GLOBAL SUBMISSIONS OVERVIEW (NEW) */}
+          <div className="w-full">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5 mb-2">
+              <Clock className="h-4 w-4" /> Global Submission Status
+            </h2>
+            <div className="grid grid-cols-3 gap-3.5">
+              <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
+                <Clock className="h-6 w-6 text-amber-500 mb-1" />
+                <span className="text-2xl font-black text-amber-700">{globalSubmissionCounts.pending}</span>
+                <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pending Approval</span>
+              </div>
+              <div className="bg-emerald-50 border-2 border-emerald-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
+                <CheckCircle2 className="h-6 w-6 text-emerald-500 mb-1" />
+                <span className="text-2xl font-black text-emerald-700">{globalSubmissionCounts.approved}</span>
+                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Approved Content</span>
+              </div>
+              <div className="bg-rose-50 border-2 border-rose-200 p-4 rounded-3xl flex flex-col items-center justify-center text-center shadow-sm">
+                <XCircle className="h-6 w-6 text-rose-500 mb-1" />
+                <span className="text-2xl font-black text-rose-700">{globalSubmissionCounts.rejected}</span>
+                <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Action Required (Rejected)</span>
+              </div>
             </div>
           </div>
 
           {/* CATEGORIES PICKER */}
-          <div className="w-full space-y-2">
+          <div className="w-full space-y-2 mt-2">
             <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
               <Layers className="h-4 w-4" /> Learning Modules
             </h2>
@@ -947,6 +1178,19 @@ function ContentManagementComponent() {
             </div>
           </div>
 
+          {!modelsReady.gestureModel && !modelLoadError && (
+            <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-bold px-4 py-2 rounded-2xl">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading gesture recognition model — sign/phrase scoring will activate automatically once ready.
+            </div>
+          )}
+          {modelLoadError && (
+            <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-bold px-4 py-2 rounded-2xl">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {modelLoadError}
+            </div>
+          )}
+
           {/* ACTIVE CATEGORY WORKSPACE CONTAINER */}
           <div className="bg-white rounded-3xl border border-[#F5E6C4] p-5 shadow-sm space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -974,7 +1218,7 @@ function ContentManagementComponent() {
                     workspaceTab === 'activity_levels' ? 'bg-[#521903] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <Trophy className="h-3.5 w-3.5" /> 2. Activity Quizzes ({categoryActivities.length})
+                  <Trophy className="h-3.5 w-3.5" /> 2. Activity Quizzes ({categoryActivitiesCount})
                 </button>
               </div>
             </div>
@@ -1062,7 +1306,7 @@ function ContentManagementComponent() {
                         activeTab === 'live' ? 'bg-[#521903] text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      Live Mobile Road ({categoryActivities.length})
+                      Live Mobile Road ({categoryActivitiesCount})
                     </button>
                     <button
                       onClick={() => setActiveTab('submissions')}
@@ -1072,7 +1316,7 @@ function ContentManagementComponent() {
                           : 'bg-white text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      Approval Submissions ({mySubmissions.filter((s) => s.category === activeCategory).length})
+                      Approval Submissions ({categorySubmissionsCount})
                     </button>
                   </div>
 
@@ -1084,9 +1328,36 @@ function ContentManagementComponent() {
                   </button>
                 </div>
 
+                {/* Sub-Filters for Search & Difficulty within Activities tab */}
+                <div className="flex items-center justify-between flex-wrap gap-2 px-1">
+                   <div className="relative flex-1 md:max-w-xs">
+                     <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                     <input
+                       type="text"
+                       placeholder="Search activities..."
+                       value={searchQuery}
+                       onChange={(e) => setSearchQuery(e.target.value)}
+                       className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F2B33D]/30"
+                     />
+                   </div>
+                   {activeTab === 'submissions' && (
+                     <div className="flex items-center gap-1.5">
+                       {['all', 'pending', 'approved', 'rejected'].map(st => (
+                         <button
+                           key={st}
+                           onClick={() => setSubmissionStatusFilter(st as any)}
+                           className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${submissionStatusFilter === st ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                         >
+                           {st}
+                         </button>
+                       ))}
+                     </div>
+                   )}
+                </div>
+
                 {activeTab === 'live' && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {categoryActivities.map((item) => {
+                    {filteredActivities.map((item) => {
                       const diffMeta = parseDifficultyLabel(item.level);
 
                       return (
@@ -1112,11 +1383,23 @@ function ContentManagementComponent() {
                             </div>
 
                             <div>
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Options</span>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                                {item.type === 'matching_type' ? 'Match Pairs' : item.type === 'sequence_order' ? 'Sequence Items' : item.type === 'fill_in_the_blank' ? 'Word Pattern Options' : 'Options'}
+                              </span>
                               <div className="grid grid-cols-2 gap-1.5">
-                                {item.options?.map((opt, i) => (
-                                  <OptionDisplay key={i} index={i} option={opt} isCorrect={opt === item.correct_answer} />
-                                ))}
+                                {item.type === 'matching_type' ? (
+                                  <div className="col-span-2 text-xs font-bold text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                    {item.options.length} Matching Pairs configured
+                                  </div>
+                                ) : item.type === 'sequence_order' ? (
+                                  <div className="col-span-2 text-xs font-bold text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                    {item.options.length} Ordered Steps
+                                  </div>
+                                ) : (
+                                  item.options?.map((opt, i) => (
+                                    <OptionDisplay key={i} index={i} option={opt} isCorrect={item.type === 'fill_in_the_blank' ? false : opt === item.correct_answer} />
+                                  ))
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1140,6 +1423,101 @@ function ContentManagementComponent() {
                         </div>
                       );
                     })}
+                    {filteredActivities.length === 0 && (
+                       <div className="col-span-full py-12 text-center text-slate-400 font-bold text-xs border-2 border-dashed border-slate-200 rounded-3xl">
+                         No activities found in this module.
+                       </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'submissions' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {filteredSubmissions.map((sub) => {
+                      const isPending = sub.status === 'pending';
+                      const isApproved = sub.status === 'approved';
+                      const isRejected = sub.status === 'rejected';
+                      const isDeleteAction = sub.submissionType === 'delete';
+                      const isModelTraining = sub.submissionType === 'train_parameters';
+                      const diffMeta = parseDifficultyLabel(sub.level || sub.difficulty);
+
+                      return (
+                        <div key={sub.id} className="bg-white rounded-3xl border border-slate-200/80 p-4 shadow-sm flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-50 border text-slate-600">
+                                {sub.category}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isModelTraining && (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-300">
+                                    Calibration
+                                  </span>
+                                )}
+                                {isDeleteAction && (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-300">
+                                    Deletion
+                                  </span>
+                                )}
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${diffMeta.color}`}>
+                                  {diffMeta.label}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                                    isPending
+                                      ? 'bg-amber-50 border-amber-200 text-amber-600'
+                                      : isApproved
+                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                                      : 'bg-rose-50 border-rose-200 text-rose-600'
+                                  }`}
+                                >
+                                  {isPending && <Clock className="h-3 w-3" />}
+                                  {isApproved && <CheckCircle2 className="h-3 w-3" />}
+                                  {isRejected && <XCircle className="h-3 w-3" />}
+                                  {sub.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <ActivityImageCard imageUrl={sub.imageUrl} correctAnswer={sub.correctAnswer} category={sub.category} />
+
+                            <div>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Prompt</span>
+                              <p className="text-xs font-black text-[#521903]">{sub.questionText}</p>
+                            </div>
+
+                            {isRejected && sub.rejectionReason && (
+                              <div className="p-2.5 bg-rose-50 rounded-xl border border-rose-200 text-[11px] text-rose-700 font-medium">
+                                <span className="font-bold block uppercase tracking-wider text-[9px] text-rose-500 mb-0.5">Admin Feedback:</span>
+                                {sub.rejectionReason}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
+                            {!isApproved && !isDeleteAction && !isModelTraining ? (
+                              <button onClick={() => openEditSubmission(sub)} className="text-xs font-black text-[#521903] hover:underline cursor-pointer">
+                                Edit & Resubmit
+                              </button>
+                            ) : isModelTraining ? (
+                              <span className="text-xs font-bold text-blue-700">Model Calibration</span>
+                            ) : isDeleteAction ? (
+                              <span className="text-xs font-bold text-rose-600">Pending Admin Removal</span>
+                            ) : (
+                              <span className="text-xs font-bold text-emerald-600">Live in Mobile App</span>
+                            )}
+                            <button onClick={() => setDeleteTarget({ submissionId: sub.id, type: 'submission' })} className="p-1.5 text-slate-300 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {filteredSubmissions.length === 0 && (
+                       <div className="col-span-full py-12 text-center text-slate-400 font-bold text-xs border-2 border-dashed border-slate-200 rounded-3xl">
+                         No submissions found.
+                       </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1237,7 +1615,7 @@ function ContentManagementComponent() {
                 </div>
               )}
 
-              {/* MODE 2: WEBCAM PRACTICE */}
+              {/* MODE 2: WEBCAM PRACTICE — real LSTM prediction, with DTW template-match fallback */}
               {(simulatorMode === 'practice' || simulatorMode === 'continuous') && (
                 <div className="w-full flex flex-col items-center space-y-2.5">
                   <div className="h-40 w-40 bg-black rounded-3xl overflow-hidden relative shadow-inner border-2 border-slate-900 flex items-center justify-center">
@@ -1269,9 +1647,26 @@ function ContentManagementComponent() {
                       {livePrediction.isCorrect ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
                       Detected: {livePrediction.label} ({Math.round(livePrediction.confidence * 100)}%)
                     </div>
+                  ) : templateMatch ? (
+                    <div
+                      className={`px-4 py-1.5 rounded-full border shadow-sm text-xs font-black flex items-center gap-1.5 ${
+                        templateMatch.isCorrect
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                          : 'bg-amber-50 border-amber-300 text-amber-700'
+                      }`}
+                    >
+                      {templateMatch.isCorrect ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                      {templateMatch.isCorrect
+                        ? 'Correct sign ✓'
+                        : `Keep adjusting (${Math.round(templateMatch.confidence * 100)}% match)`}
+                    </div>
                   ) : (
                     <div className="px-4 py-1 rounded-full bg-white border border-[#F5E6C4] shadow-sm text-xs font-black text-slate-500">
-                      {modelsReady.gestureModel ? 'Watching for your sign…' : 'Loading recognition model…'}
+                      {modelsReady.gestureModel
+                        ? 'Watching for your sign…'
+                        : (activeTrainingDoc as any)?.trainingSequences?.length
+                        ? 'Watching for your sign…'
+                        : 'No approved reference sample yet for this sign'}
                     </div>
                   )}
 
@@ -1292,134 +1687,62 @@ function ContentManagementComponent() {
                 </div>
               )}
 
-              {/* MODE 3: ACTIVE GESTURE TRAINING */}
+              {/* MODE 3: TAKE-BASED GESTURE TRAINING — record the full moving sign, one take at a time, for LSTM training */}
               {simulatorMode === 'train' && (
                 <div className="w-full flex flex-col items-center space-y-3">
                   <div
                     className={`h-40 w-40 bg-black rounded-3xl overflow-hidden relative shadow-inner border-2 transition-all duration-300 flex items-center justify-center ${
-                      overallQuality > 80 ? 'border-emerald-500 ring-4 ring-emerald-500/30' : 'border-amber-400'
+                      captureComplete
+                        ? 'border-emerald-500 ring-4 ring-emerald-500/30'
+                        : isRecordingTake
+                        ? 'border-rose-500 ring-2 ring-rose-500/30'
+                        : 'border-amber-400'
                     }`}
                   >
                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+
+                    {isRecordingTake && (
+                      <div className="absolute top-2 right-2 flex items-center gap-1 bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow animate-pulse">
+                        <span className="h-1.5 w-1.5 bg-white rounded-full" /> REC
+                      </div>
+                    )}
+
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                       <div
                         className={`h-28 w-28 rounded-full border-2 flex items-center justify-center text-center p-2 transition-all ${
-                          overallQuality > 80 ? 'border-emerald-400 bg-emerald-500/10' : 'border-white/70'
+                          isRecordingTake ? 'border-rose-400 bg-rose-500/10' : 'border-white/70'
                         }`}
                       >
                         <span className="text-[10px] font-black text-white uppercase tracking-wider drop-shadow">
-                          {overallQuality > 80 ? 'Optimal Posture ✓' : 'Align Hand'}
+                          {captureComplete
+                            ? 'All Takes Captured ✓'
+                            : !handDetected
+                            ? 'No Hand Detected'
+                            : isRecordingTake
+                            ? 'Perform the sign…'
+                            : 'Ready to record'}
                         </span>
                       </div>
                     </div>
                   </div>
 
                   <div className="w-full bg-amber-50 border border-amber-200 p-2 rounded-xl text-center">
-                    <p className="text-[11px] font-black text-amber-800 animate-pulse flex items-center justify-center gap-1">
-                      <Compass className="h-3 w-3 text-amber-600 flex-shrink-0" />
-                      {guidanceTip}
+                    <p className="text-[11px] font-black text-amber-800 flex items-center justify-center gap-1">
+                      {isRecordingTake
+                        ? 'Perform the full sign naturally, then tap Stop & Save.'
+                        : 'Press Record, sign the gesture from start to finish, then Stop & Save.'}
                     </p>
-                  </div>
-
-                  {/* ACTIVE POSTURE INDICATORS */}
-                  <div className="w-full bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                        <Compass className="h-3 w-3 text-[#F2B33D]" /> Real-time Posture Metrics
-                      </span>
-                      <span className="text-[9px] font-black text-slate-400">Target: &gt;75%</span>
-                    </div>
-
-                    {/* 1. ROTATE */}
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between text-[10px] font-black text-slate-700">
-                        <span className="flex items-center gap-1">
-                          <RotateCw className="h-3 w-3 text-slate-400" /> Rotate (Angle):
-                        </span>
-                        <span className={livePosture.rotate >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
-                          {livePosture.rotate}% {livePosture.rotate >= 75 ? '✓' : '• adjust palm'}
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            livePosture.rotate >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
-                          }`}
-                          style={{ width: `${livePosture.rotate}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* 2. TILT */}
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between text-[10px] font-black text-slate-700">
-                        <span className="flex items-center gap-1">
-                          <Sliders className="h-3 w-3 text-slate-400" /> Tilt (Pitch):
-                        </span>
-                        <span className={livePosture.tilt >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
-                          {livePosture.tilt}% {livePosture.tilt >= 75 ? '✓' : '• tilt up'}
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            livePosture.tilt >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
-                          }`}
-                          style={{ width: `${livePosture.tilt}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* 3. DISTANCE */}
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between text-[10px] font-black text-slate-700">
-                        <span className="flex items-center gap-1">
-                          <Move className="h-3 w-3 text-slate-400" /> Distance (Depth):
-                        </span>
-                        <span className={livePosture.distance >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
-                          {livePosture.distance}% {livePosture.distance >= 75 ? '✓' : '• center hand'}
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            livePosture.distance >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
-                          }`}
-                          style={{ width: `${livePosture.distance}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* 4. SWITCH HANDS */}
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between text-[10px] font-black text-slate-700">
-                        <span className="flex items-center gap-1">
-                          <HandMetal className="h-3 w-3 text-slate-400" /> Switch Hands:
-                        </span>
-                        <span className={livePosture.switchHands >= 75 ? 'text-emerald-600' : 'text-amber-600'}>
-                          {livePosture.switchHands}% {livePosture.switchHands >= 75 ? '✓' : ''}
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            livePosture.switchHands >= 75 ? 'bg-emerald-500' : 'bg-amber-400'
-                          }`}
-                          style={{ width: `${livePosture.switchHands}%` }}
-                        />
-                      </div>
-                    </div>
                   </div>
 
                   <div className="w-full space-y-1 text-center">
                     <div className="flex justify-between text-[10px] font-bold text-slate-500 px-1">
-                      <span>Valid Posture Samples</span>
-                      <span className="font-mono">{samplesCaptured} / {REQUIRED_VALID_SAMPLES}</span>
+                      <span>Takes Captured</span>
+                      <span className="font-mono">{takesCaptured} / {REQUIRED_TAKES}</span>
                     </div>
                     <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-                        style={{ width: `${(samplesCaptured / REQUIRED_VALID_SAMPLES) * 100}%` }}
+                        style={{ width: `${Math.min(100, (takesCaptured / REQUIRED_TAKES) * 100)}%` }}
                       />
                     </div>
                   </div>
@@ -1427,20 +1750,43 @@ function ContentManagementComponent() {
                   <div className="flex items-center gap-2 w-full pt-1">
                     <button
                       onClick={() => setSimulatorMode('practice')}
-                      disabled={trainingSaving}
-                      className="flex-1 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50"
+                      disabled={trainingSaving || isRecordingTake}
+                      className="flex-1 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50 disabled:opacity-40"
                     >
                       Back
                     </button>
+
+                    {!isRecordingTake ? (
+                      <button
+                        onClick={() => {
+                          sequenceBufferRef.current.clear();
+                          setIsRecordingTake(true);
+                        }}
+                        disabled={trainingSaving || !handDetected}
+                        className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
+                      >
+                        <Camera className="h-3.5 w-3.5" /> Record Take
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSaveTake}
+                        className="flex-1 py-2 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Stop & Save
+                      </button>
+                    )}
+                  </div>
+
+                  {takesCaptured >= 1 && !isRecordingTake && (
                     <button
                       onClick={handleSaveTrainingSample}
-                      disabled={trainingSaving || samplesCaptured < 1}
-                      className="flex-1 py-2 bg-[#F2B33D] hover:bg-[#D99A26] disabled:opacity-50 text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
+                      disabled={trainingSaving}
+                      className="w-full py-2.5 bg-[#521903] hover:bg-[#3B1102] disabled:opacity-50 text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
                     >
-                      {trainingSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                      Submit for Approval
+                      {trainingSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                      {captureComplete ? 'Submit for Approval' : `Submit Partial Data (${takesCaptured})`}
                     </button>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1448,7 +1794,7 @@ function ContentManagementComponent() {
         </div>
       )}
 
-      {/* 3. MODAL: ADD NEW TUTORIAL & PRACTICE SIGN (WITH DRAG-AND-DROP IMAGE UPLOAD) */}
+      {/* 3. MODAL: ADD NEW TUTORIAL & PRACTICE SIGN */}
       {showNewSignModal && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white p-6 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 space-y-4">
@@ -1505,7 +1851,6 @@ function ContentManagementComponent() {
                 />
               </div>
 
-              {/* Drag-and-Drop Image Staging Zone */}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
                   Illustration Image (Upload or Drag & Drop)
@@ -1537,7 +1882,7 @@ function ContentManagementComponent() {
                         <img src={newSignPreviewUrl} alt="Staged" className="max-h-full max-w-full object-contain" />
                       </div>
                       <span className="text-[10px] font-black text-emerald-700 flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Picture Staged
+                        <CheckCircle className="h-3 w-3 text-emerald-600" /> Picture Staged
                       </span>
                     </div>
                   ) : (
@@ -1676,10 +2021,24 @@ function ContentManagementComponent() {
                     disabled={saving}
                     onChange={(e) => {
                       const selected = e.target.value;
-                      const defaultOptions = selected === 'true_false' ? ['True', 'False'] : formState.options;
-                      setFormState({ ...formState, type: selected, options: defaultOptions });
-                      if (selected === 'text_to_sign' || selected === 'solve_to_sign') {
+
+                      let defaultOptions = formState.options;
+                      if (selected === 'true_false') {
+                        defaultOptions = ['True', 'False'];
+                      } else if (selected === 'matching_type') {
+                        defaultOptions = ['|||', '|||', '|||'];
+                      } else if (selected === 'sequence_order') {
+                        defaultOptions = ['', '', ''];
+                      } else if (['true_false', 'matching_type', 'sequence_order'].includes(formState.type)) {
+                        defaultOptions = ['', '', '', ''];
+                      }
+
+                      setFormState({ ...formState, type: selected, options: defaultOptions, correctAnswerIndex: 0, correct_answer: '' });
+
+                      if (selected === 'text_to_sign' || selected === 'solve_to_sign' || selected === 'fill_in_the_blank') {
                         setOptionsMode('image');
+                      } else {
+                        setOptionsMode('text');
                       }
                     }}
                     className="w-full appearance-none px-3.5 py-2.5 pr-8 border-2 border-slate-200 bg-slate-50/50 rounded-xl focus:outline-none focus:bg-white text-slate-800 font-bold text-xs disabled:opacity-50 cursor-pointer"
@@ -1717,7 +2076,7 @@ function ContentManagementComponent() {
               </label>
               <input
                 type="text"
-                placeholder="e.g. What number is this sign? or Solve: 3 - 1 = ?"
+                placeholder={formState.type === 'fill_in_the_blank' ? "e.g. I-type ang mga kulang na letra upang mabuo ang salita:" : "e.g. What number is this sign? or Solve: 3 - 1 = ?"}
                 value={formState.question_text}
                 disabled={saving}
                 onChange={(e) => setFormState({ ...formState, question_text: e.target.value })}
@@ -1749,7 +2108,7 @@ function ContentManagementComponent() {
                       <img src={filePreviewUrl} alt="New upload preview" className="max-h-full max-w-full object-contain" />
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-full font-black text-xs">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> New Picture Staged
+                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600" /> New Picture Staged
                     </span>
                   </div>
                 ) : formState.image_url ? (
@@ -1827,61 +2186,104 @@ function ContentManagementComponent() {
           </div>
 
           <div className="w-full bg-white rounded-3xl border border-slate-150 p-6 space-y-5 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <label className="text-slate-700 text-xs font-black uppercase tracking-wider block">
-                  Multiple Choice Options Format
-                </label>
-                <p className="text-[11px] text-slate-400 font-semibold">
-                  Click the circle checkmark to designate the CORRECT answer.
+
+            {/* Template Specific Headers */}
+            {formState.type === 'fill_in_the_blank' && (
+              <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl mb-2 space-y-4 shadow-sm">
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 flex items-center gap-1.5">
+                  <Type className="h-4 w-4" /> Word / Sentence Completion Setup
+                </span>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Target Word / Pattern</label>
+                  <p className="text-[10px] text-slate-500 font-semibold mb-1">
+                    Use underscores <span className="font-mono bg-white px-1 border rounded">_</span> to represent the missing blanks the student needs to fill in.
+                  </p>
+                  <input
+                    type="text"
+                    placeholder="e.g. S_GN L_NGU_GE"
+                    value={formState.correct_answer || ''}
+                    onChange={(e) => setFormState({ ...formState, correct_answer: e.target.value })}
+                    className="w-full px-4 py-2.5 border border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300/50 text-slate-800 font-bold text-sm tracking-widest shadow-inner uppercase"
+                  />
+                </div>
+              </div>
+            )}
+
+            {formState.type === 'matching_type' && (
+              <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-2xl mb-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 block mb-1">Matching Type Setup</span>
+                <p className="text-xs text-blue-800">
+                  Define the correct matching pairs below. The student application will automatically shuffle the items on the left and right sides during the activity.
                 </p>
               </div>
+            )}
 
-              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl border border-slate-200">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setOptionsMode('text')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
-                    optionsMode === 'text' ? 'bg-white text-[#521903] shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <Type className="h-3.5 w-3.5" /> Text Choices
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setOptionsMode('image')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
-                    optionsMode === 'image' ? 'bg-white text-[#521903] shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <ImageIcon className="h-3.5 w-3.5" /> Image / Sign Choices
-                </button>
+            {formState.type === 'sequence_order' && (
+              <div className="p-3.5 bg-purple-50 border border-purple-200 rounded-2xl mb-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 block mb-1">Sequence / Ordering Setup</span>
+                <p className="text-xs text-purple-800">
+                  Define the items in their correct, chronological order below. The student app will shuffle them for the user to arrange.
+                </p>
               </div>
-            </div>
+            )}
 
-            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <Eye className="h-3.5 w-3.5" /> Live Choice Layout Preview:
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {formState.options.map((opt, i) => (
-                  <OptionDisplay key={i} index={i} option={opt} isCorrect={i === formState.correctAnswerIndex} />
-                ))}
+            {/* Mode Switcher for Applicable Templates */}
+            {formState.type !== 'true_false' && formState.type !== 'matching_type' && formState.type !== 'sequence_order' && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <label className="text-slate-700 text-xs font-black uppercase tracking-wider block">
+                    {formState.type === 'fill_in_the_blank' ? 'Choice Pool Format' : 'Multiple Choice Options Format'}
+                  </label>
+                  <p className="text-[11px] text-slate-400 font-semibold">
+                    {formState.type === 'fill_in_the_blank' ? 'Select the format for the choices bank (e.g., keyboard images).' : 'Click the circle checkmark to designate the CORRECT answer.'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl border border-slate-200">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => setOptionsMode('text')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                      optionsMode === 'text' ? 'bg-white text-[#521903] shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Type className="h-3.5 w-3.5" /> Text Choices
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => setOptionsMode('image')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                      optionsMode === 'image' ? 'bg-white text-[#521903] shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" /> Image / Sign Choices
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
-            <div className="space-y-3">
-              {formState.options.map((opt, idx) => {
-                const isChecked = idx === formState.correctAnswerIndex;
-                const isImage = optionsMode === 'image' || opt.startsWith('blob:') || opt.startsWith('http') || opt.includes('assets/');
+            {formState.type !== 'matching_type' && formState.type !== 'true_false' && formState.type !== 'sequence_order' && (
+              <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                  <Eye className="h-3.5 w-3.5" /> {formState.type === 'fill_in_the_blank' ? 'Choice Pool Layout Preview:' : 'Live Choice Layout Preview:'}
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {formState.options.map((opt, i) => (
+                    <OptionDisplay key={i} index={i} option={opt} isCorrect={formState.type === 'fill_in_the_blank' ? false : i === formState.correctAnswerIndex} />
+                  ))}
+                </div>
+              </div>
+            )}
 
-                return (
+            {formState.type === 'true_false' && (
+              <div className="space-y-3 pt-2">
+                {formState.options.slice(0, 2).map((opt, idx) => (
                   <div
                     key={idx}
-                    className={`p-3 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center gap-3.5 transition-all ${
-                      isChecked
+                    className={`p-3 rounded-2xl border flex items-center gap-3.5 transition-all ${
+                      idx === formState.correctAnswerIndex
                         ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-300/40'
                         : 'bg-slate-50/70 border-slate-200'
                     }`}
@@ -1890,60 +2292,110 @@ function ContentManagementComponent() {
                       type="button"
                       disabled={saving}
                       onClick={() => setFormState({ ...formState, correctAnswerIndex: idx, correct_answer: opt })}
-                      title="Set as correct answer"
                       className={`flex-shrink-0 h-9 w-9 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 ${
-                        isChecked
+                        idx === formState.correctAnswerIndex
                           ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm ring-2 ring-emerald-300/40'
                           : 'border-slate-300 bg-white hover:border-slate-400 text-transparent'
                       }`}
                     >
                       <Check className="h-4 w-4 stroke-[3]" />
                     </button>
+                    <span className="text-sm font-black text-slate-700">{opt}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
-                    {isImage && (
-                      <div className="h-12 w-12 rounded-xl bg-white border border-slate-200 p-1 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-xs">
-                        {opt ? (
-                          <img
-                            src={resolveImagePath(opt)[0] || opt}
-                            alt={`Option ${idx + 1}`}
-                            className="max-h-full max-w-full object-contain"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                            }}
+            {formState.type === 'matching_type' && (
+              <div className="space-y-4">
+                {formState.options.map((opt, idx) => {
+                  const parts = opt.split('|||');
+                  const leftVal = parts[0] || '';
+                  const rightVal = parts[1] || '';
+                  const isLeftImage = leftVal.startsWith('blob:') || leftVal.startsWith('http') || leftVal.includes('assets/');
+
+                  return (
+                    <div key={idx} className="p-3.5 rounded-2xl border bg-slate-50/70 border-slate-200 flex flex-col sm:flex-row gap-3 items-center relative">
+                      <div className="flex-1 w-full relative">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest absolute -top-2 left-3 bg-slate-50 px-1.5 z-10">Left Item</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          {isLeftImage && (
+                            <div className="h-10 w-10 rounded-xl bg-white border border-slate-200 p-1 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-xs">
+                              <img src={resolveImagePath(leftVal)[0] || leftVal} className="max-h-full max-w-full object-contain" alt="" />
+                            </div>
+                          )}
+                          <input
+                            type="text"
+                            value={leftVal.startsWith('blob:') ? `Image Uploaded` : leftVal}
+                            onChange={(e) => updateOptionValue(idx, `${e.target.value}|||${rightVal}`)}
+                            placeholder="Text or Image URL"
+                            className="w-full px-3 py-2 border border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F2B33D]/30 text-slate-800 font-bold text-xs"
                           />
-                        ) : (
-                          <ImageIcon className="h-5 w-5 text-slate-300" />
-                        )}
+                          <label className="p-2 bg-white border border-slate-200 hover:border-[#521903] text-slate-700 rounded-xl cursor-pointer shadow-sm flex-shrink-0" title="Upload Image for Left Item">
+                            <Upload className="h-3.5 w-3.5 text-[#F2B33D]" />
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept=".jpeg,.png,.jpg,.webp"
+                              onChange={(e) => {
+                                if (e.target.files?.[0]) handleOptionFileUpload(idx, e.target.files[0]);
+                              }}
+                            />
+                          </label>
+                        </div>
                       </div>
-                    )}
 
-                    <div className="flex-1 w-full flex items-center gap-2">
-                      <div className="flex-1 relative">
+                      <div className="flex-shrink-0 text-slate-300">
+                        <ArrowRightLeft className="h-5 w-5" />
+                      </div>
+
+                      <div className="flex-1 w-full relative">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest absolute -top-2 left-3 bg-slate-50 px-1.5 z-10">Right Match</span>
+                        <div className="mt-1">
+                          <input
+                            type="text"
+                            value={rightVal}
+                            onChange={(e) => updateOptionValue(idx, `${leftVal}|||${e.target.value}`)}
+                            placeholder="Matching Text Value"
+                            className="w-full px-3 py-2 border border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F2B33D]/30 text-slate-800 font-bold text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {formState.options.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => removeOptionField(idx)}
+                          className="p-2 absolute -top-2 -right-2 bg-white border border-slate-200 text-slate-400 hover:text-rose-600 rounded-full shadow-sm cursor-pointer"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {formState.type === 'sequence_order' && (
+              <div className="space-y-3">
+                {formState.options.map((opt, idx) => {
+                  return (
+                    <div key={idx} className="p-3 rounded-2xl border bg-slate-50/70 border-slate-200 flex items-center gap-3.5 relative">
+                      <div className="flex-shrink-0 h-9 w-9 rounded-full border-2 border-purple-200 bg-purple-100 text-purple-700 flex items-center justify-center font-black text-xs shadow-sm">
+                        {idx + 1}
+                      </div>
+
+                      <div className="flex-1 w-full">
                         <input
                           type="text"
                           disabled={saving}
-                          placeholder={isImage ? `Option ${idx + 1} Image Identifier or Label` : `Option ${idx + 1} Text Value`}
-                          value={opt.startsWith('blob:') ? `Choice ${String.fromCharCode(65 + idx)} (Uploaded File)` : opt}
+                          placeholder={`Sequence Item ${idx + 1}`}
+                          value={opt}
                           onChange={(e) => updateOptionValue(idx, e.target.value)}
                           className="w-full px-4 py-2 border-2 border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F2B33D]/30 text-slate-800 font-bold text-xs disabled:opacity-50"
                         />
                       </div>
-
-                      {isImage && (
-                        <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border-2 border-slate-200 hover:border-[#521903] text-slate-700 font-black text-xs rounded-xl cursor-pointer shadow-sm flex-shrink-0">
-                          <Upload className="h-3.5 w-3.5 text-[#F2B33D]" />
-                          <span>{opt ? 'Replace Image' : 'Upload Image'}</span>
-                          <input
-                            type="file"
-                            className="hidden"
-                            disabled={saving}
-                            accept=".jpeg,.png,.jpg,.webp"
-                            onChange={(e) => {
-                              if (e.target.files?.[0]) handleOptionFileUpload(idx, e.target.files[0]);
-                            }}
-                          />
-                        </label>
-                      )}
 
                       {formState.options.length > 2 && (
                         <button
@@ -1957,30 +2409,129 @@ function ContentManagementComponent() {
                         </button>
                       )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
 
-            {formState.options.length < 6 && formState.type !== 'true_false' && (
+            {/* Standard MCQ and Fill in Blank Choice Pool List */}
+            {formState.type !== 'true_false' && formState.type !== 'matching_type' && formState.type !== 'sequence_order' && (
+              <div className="space-y-3">
+                {formState.type === 'fill_in_the_blank' && (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block mb-1">Choice Pool (Options Bank)</span>
+                )}
+                {formState.options.map((opt, idx) => {
+                  const isChecked = formState.type === 'fill_in_the_blank' ? false : idx === formState.correctAnswerIndex;
+                  const isImage = optionsMode === 'image' || opt.startsWith('blob:') || opt.startsWith('http') || opt.includes('assets/');
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center gap-3.5 transition-all ${
+                        isChecked
+                          ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-300/40'
+                          : 'bg-slate-50/70 border-slate-200'
+                      }`}
+                    >
+                      {formState.type !== 'fill_in_the_blank' && (
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => setFormState({ ...formState, correctAnswerIndex: idx, correct_answer: opt })}
+                          title="Set as correct answer"
+                          className={`flex-shrink-0 h-9 w-9 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 ${
+                            isChecked
+                              ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm ring-2 ring-emerald-300/40'
+                              : 'border-slate-300 bg-white hover:border-slate-400 text-transparent'
+                          }`}
+                        >
+                          <Check className="h-4 w-4 stroke-[3]" />
+                        </button>
+                      )}
+
+                      {isImage && (
+                        <div className="h-12 w-12 rounded-xl bg-white border border-slate-200 p-1 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-xs">
+                          {opt ? (
+                            <img
+                              src={resolveImagePath(opt)[0] || opt}
+                              alt={`Option ${idx + 1}`}
+                              className="max-h-full max-w-full object-contain"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <ImageIcon className="h-5 w-5 text-slate-300" />
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex-1 w-full flex items-center gap-2">
+                        <div className="flex-1 relative">
+                          <input
+                            type="text"
+                            disabled={saving}
+                            placeholder={isImage ? `Option ${idx + 1} Image Identifier or Label` : `Option ${idx + 1} Text Value`}
+                            value={opt.startsWith('blob:') ? `Choice ${String.fromCharCode(65 + idx)} (Uploaded File)` : opt}
+                            onChange={(e) => updateOptionValue(idx, e.target.value)}
+                            className="w-full px-4 py-2 border-2 border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F2B33D]/30 text-slate-800 font-bold text-xs disabled:opacity-50"
+                          />
+                        </div>
+
+                        {isImage && (
+                          <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border-2 border-slate-200 hover:border-[#521903] text-slate-700 font-black text-xs rounded-xl cursor-pointer shadow-sm flex-shrink-0">
+                            <Upload className="h-3.5 w-3.5 text-[#F2B33D]" />
+                            <span>{opt ? 'Replace Image' : 'Upload Image'}</span>
+                            <input
+                              type="file"
+                              className="hidden"
+                              disabled={saving}
+                              accept=".jpeg,.png,.jpg,.webp"
+                              onChange={(e) => {
+                                if (e.target.files?.[0]) handleOptionFileUpload(idx, e.target.files[0]);
+                              }}
+                            />
+                          </label>
+                        )}
+
+                        {formState.options.length > 2 && (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => removeOptionField(idx)}
+                            className="p-2 text-slate-300 hover:text-rose-600 rounded-xl hover:bg-rose-50 cursor-pointer disabled:opacity-40"
+                            title="Remove option"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {formState.options.length < 12 && formState.type !== 'true_false' && (
               <button
                 type="button"
                 disabled={saving}
                 onClick={addOptionField}
                 className="inline-flex items-center gap-1.5 text-xs font-black text-[#521903] uppercase tracking-wider hover:opacity-80 cursor-pointer pt-0.5 disabled:opacity-40"
               >
-                <Plus className="h-4 w-4" /> Add Choice Option
+                <Plus className="h-4 w-4" />
+                {formState.type === 'matching_type' ? 'Add Pair' : formState.type === 'sequence_order' ? 'Add Step' : formState.type === 'fill_in_the_blank' ? 'Add Distractor / Choice' : 'Add Choice Option'}
               </button>
             )}
 
             {saveError && (
-              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-xl p-3">
+              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-xl p-3 mt-4">
                 <AlertTriangle className="h-4 w-4 text-rose-500 flex-shrink-0 mt-0.5" />
                 <p className="text-xs font-bold text-rose-600">{saveError}</p>
               </div>
             )}
 
-            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+            <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
               <button
                 onClick={() => !saving && setScreen('wizard_question')}
                 disabled={saving}
@@ -1991,11 +2542,11 @@ function ContentManagementComponent() {
 
               <button
                 onClick={handleSubmitForApproval}
-                disabled={saving || !formState.options[formState.correctAnswerIndex]?.trim()}
+                disabled={saving}
                 className="inline-flex items-center gap-2 bg-[#52B788] hover:bg-emerald-600 text-white font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-widest shadow-md cursor-pointer disabled:opacity-50"
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                {editingId ? 'Update & Submit for Approval' : 'Submit for Admin Approval'}
+                {editingId ? 'Update & Submit' : 'Submit for Admin Approval'}
               </button>
             </div>
           </div>
