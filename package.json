@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "export:dataset": "node scripts/export-training-dataset.js"
+    "export:dataset": "node scripts/export-training-dataset.js",
+    "train:pipeline": "bash scripts/run_training_pipeline.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

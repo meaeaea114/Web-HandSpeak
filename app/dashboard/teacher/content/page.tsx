@@ -61,6 +61,7 @@ import {
   uploadActivityImage,
   getAllowedActivityTypesForDifficulty,
   isActivityTypeAllowedForDifficulty,
+  buildGestureTrainingDocId,
 } from '@/lib/content-service';
 
 // Real MediaPipe detection + smoothed orientation + take-based LSTM sequence capture/scoring
@@ -131,6 +132,61 @@ const EMPTY_FORM: FormState = {
 const DETECTION_INTERVAL_MS = 120; // ~8 detections/sec — plenty for landmark tracking
 const ORIENTATION_SMOOTHING_ALPHA = 0.25; // lower = smoother/slower, higher = more responsive/jittery
 const REQUIRED_TAKES = 15; // how many full-sequence repetitions of a sign we want per dataset
+
+// ---------------------------------------------------------------------------
+// GUIDED CAPTURE VARIATION
+// ---------------------------------------------------------------------------
+// There is only one trainer providing samples for a given sign, so without
+// guidance every one of their REQUIRED_TAKES takes tends to be performed from
+// roughly the same distance, angle, and position — the dataset ends up with
+// plenty of *repeats* but very little real *variation* for the LSTM to
+// generalize from. This does NOT fabricate or synthesize data: every take is
+// still a real, physically-performed repetition of the same correct sign,
+// captured through the exact same 30-frame / 126-feature pipeline
+// (FrameSequenceBuffer -> handleSaveTake) as before. All this adds is which
+// instruction the trainer sees before each take, so the natural human
+// variation between repetitions actually spans different hand positions,
+// distances, and angles instead of clustering in one spot.
+//
+// The gesture performed must never change — only where/how it's framed.
+const CAPTURE_VARIATION_STEPS: Array<{ title: string; detail: string }> = [
+  { title: 'Natural', detail: 'Perform the sign naturally, centered in the frame.' },
+  { title: 'Shift Left', detail: 'Perform the sign with your hand shifted slightly to the LEFT.' },
+  { title: 'Shift Right', detail: 'Perform the sign with your hand shifted slightly to the RIGHT.' },
+  { title: 'Move Higher', detail: 'Perform the sign slightly HIGHER in the camera frame.' },
+  { title: 'Move Lower', detail: 'Perform the sign slightly LOWER in the camera frame.' },
+  { title: 'Move Closer', detail: 'Perform the sign slightly CLOSER to the camera.' },
+  { title: 'Move Farther', detail: 'Perform the sign slightly FARTHER from the camera.' },
+  { title: 'Wrist Angle', detail: 'Slightly change your hand/wrist ANGLE while performing the sign.' },
+  { title: 'Rotate/Tilt', detail: 'Slightly rotate or tilt your hand, if that still feels natural for this sign.' },
+  { title: 'Reposition', detail: 'Perform the sign from a slightly different position within the frame (e.g. a corner).' },
+];
+
+/**
+ * Picks which variation instruction to show for a given take index (0-based
+ * — i.e. `takesCaptured`, the take about to be recorded next). The first and
+ * last take of a dataset are always the plain "natural" instruction so every
+ * dataset has a clean baseline sample at both ends; the takes in between
+ * cycle through the real-variation pool above (repeating it if
+ * `totalRequired` is larger than the pool) so a single trainer still
+ * produces spatial diversity across their required takes.
+ */
+function getCaptureInstruction(
+  takeIndex: number,
+  totalRequired: number
+): { title: string; detail: string; stepNumber: number } {
+  const stepNumber = Math.min(takeIndex, Math.max(totalRequired - 1, 0)) + 1;
+  const isFirst = takeIndex <= 0;
+  const isLast = takeIndex >= totalRequired - 1;
+
+  if (isFirst || isLast || totalRequired <= 1) {
+    return { ...CAPTURE_VARIATION_STEPS[0], stepNumber };
+  }
+
+  const variationPool = CAPTURE_VARIATION_STEPS.slice(1);
+  const step = variationPool[(takeIndex - 1) % variationPool.length];
+  return { ...step, stepNumber };
+}
 
 // Returns the options array a given Activity Type should start with when
 // selected — either a structural default (True/False's two fixed choices,
@@ -614,7 +670,16 @@ function ContentManagementComponent() {
             sequenceBufferRef.current.push(featureVector);
 
             if (isGestureModelReady()) {
-              const prediction = predictGesture(sequenceBufferRef.current, targetLesson.symbol);
+              // The LSTM's labels are the gesture_training_data document ids
+              // (`${category}_${gestureKey}`, see buildGestureTrainingDocId),
+              // not the bare symbol — build the same id here so predicted
+              // labels can ever actually match the target and isCorrect
+              // isn't silently false for every prediction.
+              const targetGestureLabel = buildGestureTrainingDocId(
+                targetLesson.category,
+                targetLesson.symbol
+              );
+              const prediction = predictGesture(sequenceBufferRef.current, targetGestureLabel);
               if (prediction) setLivePrediction(prediction);
             }
 
@@ -668,6 +733,15 @@ function ContentManagementComponent() {
       (g) => g.gestureKey.toLowerCase() === activeLesson.symbol.toLowerCase()
     );
   }, [activeLesson, gestureTrainingList]);
+
+  // Which guided-variation instruction applies to the take the trainer is
+  // about to record (or is currently recording). `takesCaptured` is already
+  // the 0-based index of that take (0 takes captured so far -> about to
+  // record take #1, etc.) — see CAPTURE_VARIATION_STEPS above.
+  const currentCaptureStep = useMemo(
+    () => getCaptureInstruction(takesCaptured, REQUIRED_TAKES),
+    [takesCaptured]
+  );
 
   /** Snapshots the current rolling buffer as one completed take. */
   const handleSaveTake = () => {
@@ -1733,18 +1807,25 @@ function ContentManagementComponent() {
                             : !handDetected
                             ? 'No Hand Detected'
                             : isRecordingTake
-                            ? 'Perform the sign…'
+                            ? currentCaptureStep.title
                             : 'Ready to record'}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="w-full bg-amber-50 border border-amber-200 p-2 rounded-xl text-center">
+                  <div className="w-full bg-amber-50 border border-amber-200 p-2 rounded-xl text-center space-y-0.5">
+                    {!captureComplete && (
+                      <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">
+                        Take {currentCaptureStep.stepNumber} of {REQUIRED_TAKES} — {currentCaptureStep.title}
+                      </p>
+                    )}
                     <p className="text-[11px] font-black text-amber-800 flex items-center justify-center gap-1">
-                      {isRecordingTake
-                        ? 'Perform the full sign naturally, then tap Stop & Save.'
-                        : 'Press Record, sign the gesture from start to finish, then Stop & Save.'}
+                      {captureComplete
+                        ? 'All takes captured — you can submit for approval below.'
+                        : isRecordingTake
+                        ? `${currentCaptureStep.detail} Then tap Stop & Save.`
+                        : `Press Record, then: ${currentCaptureStep.detail}`}
                     </p>
                   </div>
 
