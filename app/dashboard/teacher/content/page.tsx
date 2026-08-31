@@ -89,11 +89,12 @@ import { GestureRecordingSession } from '@/lib/gesture-recording-session';
 import {
   buildRawFrameMetric,
   validateVariationTake,
-  variationLiveHint,
+  liveDirectionalFeedback,
   RawMetricBuffer,
   VariationBaselineTracker,
   type VariationId,
   type VariationValidationResult,
+  type LiveMovementFeedback,
 } from '@/lib/movement-variation-validator';
 
 type ContentScreen = 'dashboard' | 'wizard_question' | 'wizard_answers';
@@ -144,6 +145,28 @@ const EMPTY_FORM: FormState = {
 const DETECTION_INTERVAL_MS = 120; // ~8 detections/sec — plenty for landmark tracking
 const ORIENTATION_SMOOTHING_ALPHA = 0.25; // lower = smoother/slower, higher = more responsive/jittery
 const REQUIRED_TAKES = 15; // how many full-sequence repetitions of a sign we want per dataset
+
+// ---------------------------------------------------------------------------
+// AUTO STOP & SAVE
+// ---------------------------------------------------------------------------
+// Once a take's real, camera-measured movement validation (see
+// lib/movement-variation-validator.ts) passes AND the rolling frame buffer
+// is full, we require it to keep passing for this many CONSECUTIVE detection
+// ticks before auto-committing the take. This is purely a noise/debounce
+// guard against one flukey frame — it never substitutes for or shortcuts the
+// real validation itself, which is still the same validateVariationTake()
+// check the manual "Stop & Save" button already used. At DETECTION_INTERVAL_MS
+// this is roughly half a second of sustained, correctly-directed real motion.
+const AUTO_SAVE_STABILITY_TICKS = 4;
+// Once a take ends (or Train mode/a new sign starts), how many CONSECUTIVE
+// detection ticks the trainer's hand must be continuously visible in frame
+// before the next take auto-starts — this is what replaces the manual
+// "Record Take" click. It's a short, real, camera-verified "are you actually
+// there and ready" check (not a blind fixed timer: it resets to 0 any time
+// the hand drops out of frame), giving the trainer a brief real window to
+// read the next instruction and get in position before recording begins.
+// ~10 ticks * DETECTION_INTERVAL_MS(120) ≈ 1.2s.
+const AUTO_START_DELAY_TICKS = 10;
 
 // ---------------------------------------------------------------------------
 // GUIDED CAPTURE VARIATION
@@ -439,6 +462,27 @@ function ContentManagementComponent() {
   // tick while a take is being recorded, so the trainer sees actual
   // measured progress instead of blindly hoping a take will be accepted.
   const [liveVariationCheck, setLiveVariationCheck] = useState<VariationValidationResult | null>(null);
+  // Real-time, per-axis directional feedback derived straight from the
+  // camera-measured delta above (e.g. "Moving LEFT ✓", "Moving RIGHT — wrong
+  // way, this needs LEFT") — see lib/movement-variation-validator.ts. This is
+  // what replaces static/assumed instruction text with what the camera is
+  // actually seeing right now.
+  const [liveMovementFeedback, setLiveMovementFeedback] = useState<LiveMovementFeedback | null>(null);
+  // Master "hands-free" toggle: when on (default), takes both auto-START
+  // (once the trainer's hand is stably visible — see AUTO_START_DELAY_TICKS)
+  // and auto-STOP-AND-SAVE (once real required movement is sufficiently and
+  // consistently detected — see AUTO_SAVE_STABILITY_TICKS), so the trainer
+  // never has to click Record Take or Stop & Save. Both manual buttons below
+  // still always work as an override/fallback when this is off.
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+  // How many consecutive detection ticks the current take has already held a
+  // passing, camera-verified state — surfaced in the UI as a small "locking
+  // in…" indicator while auto-save is arming.
+  const [autoCaptureTicks, setAutoCaptureTicks] = useState(0);
+  // How many consecutive detection ticks the trainer's hand has been
+  // continuously visible since the last take ended — surfaced as a "get
+  // ready…" countdown before the next take auto-starts.
+  const [autoStartTicks, setAutoStartTicks] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -458,6 +502,21 @@ function ContentManagementComponent() {
   // tearing down and restarting the camera stream on every click.
   const isRecordingTakeRef = useRef(false);
   const takesCapturedRef = useRef(0);
+  const autoCaptureEnabledRef = useRef(true);
+  // Consecutive-tick counter backing AUTO_SAVE_STABILITY_TICKS (see above) —
+  // a ref (not state) because it must be read/reset synchronously inside the
+  // detection interval, on every tick, without waiting for a React re-render.
+  const consecutivePassTicksRef = useRef(0);
+  // Consecutive-tick counter backing AUTO_START_DELAY_TICKS — counts up only
+  // while the hand is actually detected in frame (see the detection loop),
+  // and resets to 0 the instant it isn't, so a take never auto-starts on an
+  // empty/blurry frame.
+  const autoStartTicksRef = useRef(0);
+  // Always points at the LATEST handleSaveTake closure so the detection
+  // interval (whose own closure is only recreated when camera/lesson/mode
+  // change — see the effect's dependency array) can trigger a real,
+  // up-to-date save without needing to tear down and restart the camera.
+  const handleSaveTakeRef = useRef<(auto?: boolean) => void>(() => {});
 
   // Form Wizard State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -623,6 +682,9 @@ function ContentManagementComponent() {
   useEffect(() => {
     takesCapturedRef.current = takesCaptured;
   }, [takesCaptured]);
+  useEffect(() => {
+    autoCaptureEnabledRef.current = autoCaptureEnabled;
+  }, [autoCaptureEnabled]);
 
   // Webcam activation + REAL per-frame detection (smoothed orientation, framing,
   // LSTM prediction, DTW template-match fallback, and take-based gesture recording)
@@ -639,6 +701,11 @@ function ContentManagementComponent() {
       setLivePrediction(null);
       setTemplateMatch(null);
       setLiveVariationCheck(null);
+      setLiveMovementFeedback(null);
+      setAutoCaptureTicks(0);
+      consecutivePassTicksRef.current = 0;
+      setAutoStartTicks(0);
+      autoStartTicksRef.current = 0;
       setHandDetected(false);
       return;
     }
@@ -649,10 +716,15 @@ function ContentManagementComponent() {
       captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
       variationBaselineRef.current.reset();
       rawMetricBufferRef.current.clear();
+      consecutivePassTicksRef.current = 0;
+      autoStartTicksRef.current = 0;
       setTakesCaptured(0);
       setCaptureComplete(false);
       setIsRecordingTake(false);
       setLiveVariationCheck(null);
+      setLiveMovementFeedback(null);
+      setAutoCaptureTicks(0);
+      setAutoStartTicks(0);
     }
 
     let detectionInterval: ReturnType<typeof setInterval> | null = null;
@@ -687,6 +759,14 @@ function ContentManagementComponent() {
             setHandDetected(landmarksPerHand.length > 0);
 
             if (landmarksPerHand.length === 0) {
+              // No real hand in frame this tick — reset the auto-start
+              // "continuous presence" countdown so a take never auto-begins
+              // on a gap/false-positive; the trainer must be genuinely,
+              // continuously visible for AUTO_START_DELAY_TICKS in a row.
+              if (simulatorMode === 'train' && !isRecordingTakeRef.current) {
+                autoStartTicksRef.current = 0;
+                setAutoStartTicks(0);
+              }
               return;
             }
 
@@ -732,6 +812,63 @@ function ContentManagementComponent() {
                 const baseline = variationBaselineRef.current.get();
                 const liveCheck = validateVariationTake(currentVariation, baseline, rawMetricBufferRef.current.snapshot());
                 setLiveVariationCheck(liveCheck);
+                // Specific directional read ("Moving LEFT ✓" / "Moving RIGHT
+                // — wrong way, this needs LEFT" / etc.) computed fresh from
+                // this tick's REAL measured delta — never a static prompt,
+                // so it correctly reflects a trainer who is already moving
+                // the right way instead of repeating a stale instruction.
+                const directionFeedback = liveDirectionalFeedback(currentVariation, liveCheck);
+                setLiveMovementFeedback(directionFeedback);
+
+                // AUTO STOP & SAVE: once this take's real movement has
+                // validated AND the full SEQUENCE_LENGTH-frame window is
+                // buffered, require that state to hold for
+                // AUTO_SAVE_STABILITY_TICKS consecutive ticks (a debounce
+                // against one noisy frame — never a shortcut around the real
+                // validateVariationTake() check) before auto-committing.
+                const bufferReady = sequenceBufferRef.current.isFull();
+                if (liveCheck.passed && bufferReady) {
+                  consecutivePassTicksRef.current += 1;
+                } else {
+                  consecutivePassTicksRef.current = 0;
+                }
+                setAutoCaptureTicks(consecutivePassTicksRef.current);
+
+                if (autoCaptureEnabledRef.current && consecutivePassTicksRef.current >= AUTO_SAVE_STABILITY_TICKS) {
+                  consecutivePassTicksRef.current = 0;
+                  // Flip the ref immediately (not just the state setter) so
+                  // this same interval callback can never fire a second
+                  // save before React re-renders and syncs isRecordingTakeRef.
+                  isRecordingTakeRef.current = false;
+                  handleSaveTakeRef.current(true);
+                }
+              } else if (autoCaptureEnabledRef.current && takesCapturedRef.current < REQUIRED_TAKES) {
+                // AUTO-START: the hand is visible this tick (we're past the
+                // `landmarksPerHand.length === 0` early-return above, so a
+                // real hand is genuinely in frame right now) and no take is
+                // currently recording. Count consecutive ticks of continuous
+                // real hand presence; once it holds for AUTO_START_DELAY_TICKS
+                // (~1.2s — enough time to read the next instruction and get
+                // in position), start the next take automatically — the same
+                // action the "Record Take" button used to require a click for.
+                autoStartTicksRef.current += 1;
+                setAutoStartTicks(autoStartTicksRef.current);
+
+                if (autoStartTicksRef.current >= AUTO_START_DELAY_TICKS) {
+                  autoStartTicksRef.current = 0;
+                  setAutoStartTicks(0);
+                  sequenceBufferRef.current.clear();
+                  rawMetricBufferRef.current.clear();
+                  consecutivePassTicksRef.current = 0;
+                  setLiveVariationCheck(null);
+                  setLiveMovementFeedback(null);
+                  setAutoCaptureTicks(0);
+                  // Flip the ref immediately for the same reason as the
+                  // auto-save path above — so this tick's own remaining code
+                  // (and the very next tick) sees recording as already on.
+                  isRecordingTakeRef.current = true;
+                  setIsRecordingTake(true);
+                }
               }
             }
 
@@ -810,17 +947,25 @@ function ContentManagementComponent() {
   );
 
   /**
-   * Snapshots the current rolling buffer as one completed take — but only
-   * after confirming, from REAL captured camera data, that the trainer
-   * actually performed the movement this take's instruction asked for.
-   * A take that doesn't show sufficient real movement is rejected here: it
-   * is never added to the session, and recording is left running so the
-   * trainer can keep adjusting and simply try Stop & Save again (the
-   * underlying buffers are rolling windows, not a one-shot capture).
+   * Snapshots the current rolling buffer as one completed take.
+   *
+   * Called two ways:
+   *  - `auto === false` (default): the manual "Stop & Save" button. Shows an
+   *    alert() and leaves recording running if validation fails, so the
+   *    trainer can adjust and try again — unchanged from before.
+   *  - `auto === true`: fired by the detection loop itself once real,
+   *    camera-measured movement has passed AND held for
+   *    AUTO_SAVE_STABILITY_TICKS consecutive ticks (see the detection
+   *    interval above). The loop only ever calls this once its own
+   *    liveCheck.passed was already true, so re-validating here should
+   *    always pass too — this re-check stays as a safety net, and on the
+   *    rare chance it doesn't pass (e.g. the very next real frame moved
+   *    off-target), we simply resume waiting instead of popping a blocking
+   *    alert() during an otherwise hands-free flow.
    */
-  const handleSaveTake = () => {
+  const handleSaveTake = (auto: boolean = false) => {
     if (!sequenceBufferRef.current.isFull()) {
-      alert('Keep signing for about a second — not enough frames captured yet.');
+      if (!auto) alert('Keep signing for about a second — not enough frames captured yet.');
       return;
     }
 
@@ -831,6 +976,14 @@ function ContentManagementComponent() {
     const validation = validateVariationTake(instruction.variation, baseline, rawFrames);
 
     if (!validation.passed) {
+      if (auto) {
+        // Auto-save re-check didn't confirm — leave recording running
+        // (isRecordingTakeRef was already flipped false by the caller for
+        // debounce purposes, so restore it) and keep waiting for real
+        // sustained movement instead of interrupting with a dialog.
+        isRecordingTakeRef.current = true;
+        return;
+      }
       alert(
         `Not saved — this take doesn't show enough real "${instruction.title}" movement yet.\n\n` +
           `${validation.reason}\n\n` +
@@ -858,9 +1011,26 @@ function ContentManagementComponent() {
     setCaptureComplete(captureSessionRef.current.isComplete);
     setIsRecordingTake(false);
     setLiveVariationCheck(null);
+    setLiveMovementFeedback(null);
+    setAutoCaptureTicks(0);
+    consecutivePassTicksRef.current = 0;
+    // Reset the auto-start countdown too — the next take (if any remain)
+    // should wait for a fresh AUTO_START_DELAY_TICKS of continuous hand
+    // presence before beginning, giving the trainer a real beat to read the
+    // next instruction rather than immediately barreling into it.
+    autoStartTicksRef.current = 0;
+    setAutoStartTicks(0);
     sequenceBufferRef.current.clear();
     rawMetricBufferRef.current.clear();
   };
+
+  // Keep handleSaveTakeRef pointed at the latest closure so the detection
+  // interval (created once per camera-setup effect run) can always call the
+  // up-to-date version — see the ref's declaration above for why this is
+  // needed instead of calling handleSaveTake directly from that interval.
+  useEffect(() => {
+    handleSaveTakeRef.current = handleSaveTake;
+  });
 
   const handleSaveTrainingSample = async () => {
     if (!activeLesson) return;
@@ -900,10 +1070,15 @@ function ContentManagementComponent() {
       captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
       variationBaselineRef.current.reset();
       rawMetricBufferRef.current.clear();
+      consecutivePassTicksRef.current = 0;
+      autoStartTicksRef.current = 0;
       setTakesCaptured(0);
       setCaptureComplete(false);
       setIsRecordingTake(false);
       setLiveVariationCheck(null);
+      setLiveMovementFeedback(null);
+      setAutoCaptureTicks(0);
+      setAutoStartTicks(0);
       setSelectedLessonIndex(null);
       setActiveTab('submissions');
       setWorkspaceTab('activity_levels');
@@ -1915,12 +2090,35 @@ function ContentManagementComponent() {
                             : !handDetected
                             ? 'No Hand Detected'
                             : isRecordingTake
-                            ? currentCaptureStep.title
+                            ? liveMovementFeedback?.message ?? currentCaptureStep.title
+                            : autoCaptureEnabled
+                            ? 'Starting…'
                             : 'Ready to record'}
                         </span>
                       </div>
                     </div>
                   </div>
+
+                  {/* AUTO-START countdown: shown once a real hand is visible
+                      and no take is currently recording. Counts real
+                      consecutive detection ticks (see AUTO_START_DELAY_TICKS)
+                      — resets instantly if the hand drops out of frame, so
+                      this is never a blind fixed-timer countdown. */}
+                  {!isRecordingTake && !captureComplete && handDetected && autoCaptureEnabled && (
+                    <div className="w-full p-2 rounded-xl border border-sky-200 bg-sky-50 text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase tracking-wide text-sky-700">
+                        Get ready — recording starts automatically…
+                      </p>
+                      <div className="w-full h-1.5 bg-white/70 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-sky-500 transition-all duration-150"
+                          style={{
+                            width: `${Math.max(4, Math.min(100, Math.round((autoStartTicks / AUTO_START_DELAY_TICKS) * 100)))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="w-full bg-amber-50 border border-amber-200 p-2 rounded-xl text-center space-y-0.5">
                     {!captureComplete && (
@@ -1932,41 +2130,89 @@ function ContentManagementComponent() {
                       {captureComplete
                         ? 'All takes captured — you can submit for approval below.'
                         : isRecordingTake
-                        ? `${currentCaptureStep.detail} Then tap Stop & Save.`
+                        ? autoCaptureEnabled
+                          ? `${currentCaptureStep.detail} It'll save automatically once detected.`
+                          : `${currentCaptureStep.detail} Then tap Stop & Save.`
+                        : autoCaptureEnabled
+                        ? `${currentCaptureStep.detail} Get in position — it starts automatically.`
                         : `Press Record, then: ${currentCaptureStep.detail}`}
                     </p>
                   </div>
 
-                  {/* Real-time, CAMERA-MEASURED progress toward this take's
-                      variation requirement — not just instruction text. See
-                      lib/movement-variation-validator.ts. Only shown once a
-                      baseline exists (i.e. after take #1) and while actively
-                      recording a non-"natural" take. */}
-                  {isRecordingTake && liveVariationCheck && currentCaptureStep.variation !== 'natural' && (
+                  {/* Real-time, CAMERA-MEASURED directional feedback — always
+                      reflects what THIS tick's actual landmark movement was,
+                      never a static assumption about what the trainer should
+                      be doing. See lib/movement-variation-validator.ts. */}
+                  {isRecordingTake && liveMovementFeedback && (
                     <div
                       className={`w-full p-2 rounded-xl border text-center space-y-1 ${
-                        liveVariationCheck.passed
+                        liveMovementFeedback.direction === 'sufficient'
                           ? 'bg-emerald-50 border-emerald-200'
-                          : 'bg-rose-50 border-rose-200'
+                          : liveMovementFeedback.direction === 'wrong_direction'
+                          ? 'bg-rose-50 border-rose-200'
+                          : 'bg-sky-50 border-sky-200'
                       }`}
                     >
                       <p
                         className={`text-[10px] font-black uppercase tracking-wide ${
-                          liveVariationCheck.passed ? 'text-emerald-700' : 'text-rose-700'
+                          liveMovementFeedback.direction === 'sufficient'
+                            ? 'text-emerald-700'
+                            : liveMovementFeedback.direction === 'wrong_direction'
+                            ? 'text-rose-700'
+                            : 'text-sky-700'
                         }`}
                       >
-                        {variationLiveHint(liveVariationCheck, currentCaptureStep.title)}
+                        {liveMovementFeedback.message}
                       </p>
-                      <div className="w-full h-1.5 bg-white/70 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-150 ${
-                            liveVariationCheck.passed ? 'bg-emerald-500' : 'bg-rose-400'
-                          }`}
-                          style={{ width: `${Math.max(4, Math.min(100, Math.round(liveVariationCheck.progress * 100)))}%` }}
-                        />
-                      </div>
+
+                      {/* Camera-measured progress toward this take's
+                          variation requirement — not shown for "natural"
+                          since it has no directional target. */}
+                      {liveVariationCheck && currentCaptureStep.variation !== 'natural' && (
+                        <div className="w-full h-1.5 bg-white/70 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-150 ${
+                              liveVariationCheck.passed ? 'bg-emerald-500' : 'bg-sky-400'
+                            }`}
+                            style={{ width: `${Math.max(4, Math.min(100, Math.round(liveVariationCheck.progress * 100)))}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Auto-save arming meter: counts real consecutive
+                          passing ticks (see AUTO_SAVE_STABILITY_TICKS) so the
+                          trainer can see the take is about to auto-commit. */}
+                      {autoCaptureEnabled && autoCaptureTicks > 0 && (
+                        <p className="text-[9px] font-bold text-emerald-600">
+                          Locking in… {Math.min(autoCaptureTicks, AUTO_SAVE_STABILITY_TICKS)}/{AUTO_SAVE_STABILITY_TICKS}
+                        </p>
+                      )}
                     </div>
                   )}
+
+                  {/* Master hands-free toggle — ON by default so the trainer
+                      never has to click Record Take or Stop & Save; both
+                      start and save happen automatically off real camera
+                      detection (see AUTO_START_DELAY_TICKS / AUTO_SAVE_
+                      STABILITY_TICKS above). Always overridable back to
+                      fully manual. Disabled while a take is mid-recording so
+                      flipping it can't interrupt an in-progress capture. */}
+                  <label
+                    className={`w-full flex items-center justify-center gap-2 text-[10px] font-bold px-2 py-1.5 rounded-xl border cursor-pointer select-none ${
+                      autoCaptureEnabled
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-500'
+                    } ${isRecordingTake ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={autoCaptureEnabled}
+                      disabled={isRecordingTake}
+                      onChange={(e) => setAutoCaptureEnabled(e.target.checked)}
+                      className="h-3 w-3 accent-emerald-600"
+                    />
+                    Hands-free — auto-start &amp; auto-save from real camera detection
+                  </label>
 
                   <div className="w-full space-y-1 text-center">
                     <div className="flex justify-between text-[10px] font-bold text-slate-500 px-1">
@@ -1995,20 +2241,27 @@ function ContentManagementComponent() {
                         onClick={() => {
                           sequenceBufferRef.current.clear();
                           rawMetricBufferRef.current.clear();
+                          consecutivePassTicksRef.current = 0;
+                          autoStartTicksRef.current = 0;
+                          setAutoStartTicks(0);
                           setLiveVariationCheck(null);
+                          setLiveMovementFeedback(null);
+                          setAutoCaptureTicks(0);
                           setIsRecordingTake(true);
                         }}
                         disabled={trainingSaving || !handDetected}
                         className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
                       >
-                        <Camera className="h-3.5 w-3.5" /> Record Take
+                        <Camera className="h-3.5 w-3.5" />
+                        {autoCaptureEnabled ? 'Start Now' : 'Record Take'}
                       </button>
                     ) : (
                       <button
-                        onClick={handleSaveTake}
+                        onClick={() => handleSaveTake(false)}
                         className="flex-1 py-2 bg-[#F2B33D] hover:bg-[#D99A26] text-white font-black text-xs rounded-xl shadow flex items-center justify-center gap-1.5"
                       >
-                        <Save className="h-3.5 w-3.5" /> Stop & Save
+                        <Save className="h-3.5 w-3.5" />
+                        {autoCaptureEnabled ? 'Save Now' : 'Stop & Save'}
                       </button>
                     )}
                   </div>

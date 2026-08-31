@@ -223,6 +223,96 @@ export function variationLiveHint(result: VariationValidationResult, variationTi
 }
 
 /**
+ * Specific, per-axis directional status for real-time on-screen feedback
+ * (e.g. "Moving LEFT ✓" vs "Move LEFT" vs "Wrong way — that's RIGHT").
+ *
+ * Everything here is derived from `result.measured` — the REAL signed delta
+ * `validateVariationTake` computed from actual captured MediaPipe frames for
+ * this tick — never from which button is pressed, elapsed time, or the
+ * instruction text alone. This is what fixes the "told to move LEFT while
+ * already moving LEFT" problem: the direction reported is always what the
+ * camera measured just now, so if the trainer is already correctly moving
+ * left, the feedback reflects that instead of repeating a static prompt.
+ */
+export type LiveDirection =
+  | 'left'
+  | 'right'
+  | 'up'
+  | 'down'
+  | 'closer'
+  | 'farther'
+  | 'rotating'
+  | 'sideways'
+  | 'holding_still'
+  | 'wrong_direction'
+  | 'insufficient'
+  | 'sufficient';
+
+export interface LiveMovementFeedback {
+  direction: LiveDirection;
+  /** Human-readable word for whichever way the camera actually measured movement (e.g. "LEFT", "CLOSER", "sideways"). */
+  axisWord: string;
+  message: string;
+}
+
+function axisDirectionWord(req: AxisRequirement, signedValue: number): { word: string; direction: LiveDirection } {
+  switch (req.axis) {
+    case 'wristX':
+      return signedValue < 0 ? { word: 'LEFT', direction: 'left' } : { word: 'RIGHT', direction: 'right' };
+    case 'wristY':
+      return signedValue < 0 ? { word: 'UP', direction: 'up' } : { word: 'DOWN', direction: 'down' };
+    case 'sizeRatio':
+      return signedValue > 0 ? { word: 'CLOSER', direction: 'closer' } : { word: 'FARTHER', direction: 'farther' };
+    case 'rollDeg':
+      return { word: 'wrist angle', direction: 'rotating' };
+    case 'yawpitch':
+      return { word: 'rotation/tilt', direction: 'rotating' };
+    case 'euclidean':
+      return { word: 'sideways', direction: 'sideways' };
+    default:
+      return { word: 'movement', direction: 'insufficient' };
+  }
+}
+
+export function liveDirectionalFeedback(
+  variation: VariationId,
+  result: VariationValidationResult
+): LiveMovementFeedback {
+  const req = VARIATION_REQUIREMENTS[variation];
+
+  if (variation === 'natural') {
+    return { direction: 'holding_still', axisWord: 'steady', message: 'Recording — hold the sign steady…' };
+  }
+
+  const magnitude = Math.abs(result.measured);
+  const nearZero = magnitude < result.required * 0.15;
+
+  if (result.passed) {
+    const { word } = axisDirectionWord(req, result.measured);
+    return { direction: 'sufficient', axisWord: word, message: `Moving ${word} ✓ — captured` };
+  }
+
+  if (nearZero) {
+    return { direction: 'holding_still', axisWord: 'still', message: 'Not moving yet — perform the movement now' };
+  }
+
+  const directionOk = req.direction === 0 || Math.sign(result.measured) === req.direction;
+  if (!directionOk) {
+    const actual = axisDirectionWord(req, result.measured);
+    const wanted = axisDirectionWord(req, req.direction);
+    return {
+      direction: 'wrong_direction',
+      axisWord: actual.word,
+      message: `Moving ${actual.word} — wrong way, this needs ${wanted.word}`,
+    };
+  }
+
+  const { word } = axisDirectionWord(req, result.measured);
+  const pct = Math.max(0, Math.min(100, Math.round(result.progress * 100)));
+  return { direction: 'insufficient', axisWord: word, message: `Moving ${word} — ${pct}% there, keep going` };
+}
+
+/**
  * Rolling buffer of RAW per-frame metrics for one active take, kept in sync
  * (same window length) with FrameSequenceBuffer (lib/gesture-sequence-model.ts)
  * so "the last SEQUENCE_LENGTH raw metrics" always corresponds to "the last
