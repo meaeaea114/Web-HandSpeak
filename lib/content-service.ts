@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
+import { reserveNextLevel } from '@/lib/level-assignment';
 
 export type ContentCategory = 'alphabet' | 'numbers' | 'phrases' | 'civic' | string;
 export type ContentDifficulty = 'easy' | 'medium' | 'hard';
@@ -281,6 +282,62 @@ export function normalizeActivityPayload(input: {
   const level = (input.level || `${category}_${difficulty}_1`).trim();
 
   return { category, difficulty, type, level, questionText, correctAnswer, options, imageUrl };
+}
+
+// ---------------------------------------------------------------------------
+// ACTIVITY-QUESTION IDENTIFIER
+// ---------------------------------------------------------------------------
+// The existing schema has no separate "identifier" field for a published
+// activity question — PublishedActivityQuestion.id is always read straight
+// off the Firestore document ID (see getPublishedActivityQuestions below).
+// So the Firestore document ID itself IS the existing identifier field, and
+// that's what this targets, rather than introducing a new one.
+//
+// Format: category_category_difficultyLevel_LevelNo_question_correctAnswer
+// (category intentionally repeated once — matches the naming convention
+// already visible on some existing activity_questions documents).
+
+/**
+ * Converts free text into a safe, deterministic identifier fragment:
+ * lower-cased, accents stripped, and any run of non [a-z0-9] characters
+ * collapsed to a single underscore with no leading/trailing underscore.
+ * Used ONLY to build the activity_questions document ID below — the actual
+ * question/correctAnswer field values are always stored unchanged.
+ */
+function slugifyForId(value: string): string {
+  return (value || '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// Firestore document IDs are capped at 1,500 bytes; this keeps each text
+// fragment well within that with plenty of room to spare, purely as a
+// safety bound — it does not change the naming scheme itself.
+const ID_FRAGMENT_MAX_LENGTH = 100;
+
+/**
+ * Builds the deterministic activity_questions document ID for a newly
+ * published activity question:
+ *   category_category_difficultyLevel_LevelNo_question_correctAnswer
+ * `levelNumber` must be the automatically-assigned level number from
+ * `reserveNextLevel` (see lib/level-assignment.ts).
+ */
+export function buildActivityQuestionId(
+  category: string,
+  difficulty: string,
+  levelNumber: number,
+  questionText: string,
+  correctAnswer: string
+): string {
+  const catSlug = (slugifyForId(category) || 'category').slice(0, ID_FRAGMENT_MAX_LENGTH);
+  const diffSlug = (slugifyForId(difficulty) || 'difficulty').slice(0, ID_FRAGMENT_MAX_LENGTH);
+  const questionSlug = (slugifyForId(questionText) || 'question').slice(0, ID_FRAGMENT_MAX_LENGTH);
+  const answerSlug = (slugifyForId(correctAnswer) || 'answer').slice(0, ID_FRAGMENT_MAX_LENGTH);
+  return `${catSlug}_${catSlug}_${diffSlug}_${levelNumber}_${questionSlug}_${answerSlug}`;
 }
 
 export interface ActivityValidationResult {
@@ -911,11 +968,16 @@ export async function approveContentSubmission(
   if (!subSnap.exists()) throw new Error('Submission document not found.');
 
   const sub = subSnap.data() as ContentSubmission;
-  const level = sub.level || sub.publishedLevel || `${sub.category}_${sub.difficulty}_1`;
   const isDeletion = sub.submissionType === 'delete';
   const isTrainingSync = sub.submissionType === 'train_parameters';
 
   let targetQuestionId = sub.activityQuestionId;
+
+  // Fallback for the deletion/training-sync branches below, neither of which
+  // touches activity_questions.level. The real create/update branch further
+  // down (normal activity approval) determines this itself — see the
+  // AUTOMATIC LEVEL ASSIGNMENT comment there.
+  let level: string = sub.level || sub.publishedLevel || `${sub.category}_${sub.difficulty}_1`;
 
   if (isTrainingSync) {
     const gestureKey = sub.gestureKey || sub.correctAnswer || 'gesture';
@@ -992,6 +1054,27 @@ export async function approveContentSubmission(
       throw new Error(`Cannot approve this activity question: ${validation.error}`);
     }
 
+    // -----------------------------------------------------------------
+    // AUTOMATIC LEVEL ASSIGNMENT (see lib/level-assignment.ts)
+    // -----------------------------------------------------------------
+    // A brand-new activity (no existing published doc yet, i.e. no
+    // targetQuestionId) is assigned the next available slot in its
+    // Category+Difficulty level sequence, reserved atomically so
+    // concurrent approvals can never collide. Re-approving an EDIT to an
+    // activity that is already published keeps the level it already
+    // occupies — it already has a slot, so it is never reassigned.
+    let newActivityLevelNumber: number | undefined;
+    if (targetQuestionId) {
+      const existingQuestionSnap = await getDoc(doc(db, 'activity_questions', targetQuestionId));
+      level =
+        (existingQuestionSnap.exists() ? (existingQuestionSnap.data() as any).level : undefined) ||
+        level;
+    } else {
+      const reservation = await reserveNextLevel(normalized.category, normalized.difficulty);
+      level = reservation.level;
+      newActivityLevelNumber = reservation.levelNumber;
+    }
+
     // Written under both camelCase and snake_case keys (see
     // "IMPORTANT FIREBASE PAYLOAD FIX") so existing consumers that expect
     // either naming convention keep working without a migration.
@@ -1014,11 +1097,38 @@ export async function approveContentSubmission(
       const questionRef = doc(db, 'activity_questions', targetQuestionId);
       await setDoc(questionRef, questionPayload, { merge: true });
     } else {
-      const newDoc = await addDoc(collection(db, 'activity_questions'), {
+      // Deterministic activity_questions document ID (see
+      // "ACTIVITY-QUESTION IDENTIFIER" above) built from the freshly
+      // reserved level number, not the raw `level` string.
+      const baseId = buildActivityQuestionId(
+        normalized.category,
+        normalized.difficulty,
+        newActivityLevelNumber ?? 1,
+        normalized.questionText,
+        normalized.correctAnswer
+      );
+
+      // Guard against accidentally overwriting an existing activity: the
+      // base ID is deterministic, so two different questions that happen
+      // to produce the same slug (e.g. identical question+answer text at
+      // the same level) must not collide. Walk suffixes until a free ID is
+      // found; this never touches or renumbers any existing document.
+      let candidateId = baseId;
+      let suffix = 2;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const candidateSnap = await getDoc(doc(db, 'activity_questions', candidateId));
+        if (!candidateSnap.exists()) break;
+        candidateId = `${baseId}_${suffix}`;
+        suffix += 1;
+      }
+
+      const questionRef = doc(db, 'activity_questions', candidateId);
+      await setDoc(questionRef, {
         ...questionPayload,
         createdAt: serverTimestamp(),
       });
-      targetQuestionId = newDoc.id;
+      targetQuestionId = candidateId;
     }
   }
 
