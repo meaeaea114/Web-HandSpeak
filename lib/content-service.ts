@@ -473,7 +473,7 @@ function serializeSequences(sequences: number[][][]): any[] {
   }));
 }
 
-function deserializeSequences(stored: any[] | undefined | null): number[][][] {
+export function deserializeSequences(stored: any[] | undefined | null): number[][][] {
   if (!stored || !Array.isArray(stored)) return [];
   return stored.map((sample: any) => {
     const frames = sample?.frames;
@@ -511,6 +511,13 @@ export async function logAdminAction(
 }
 
 // 2. Dispatch in-app notification to teacher
+// FIX: metadata is now run through stripUndefinedValues before the write.
+// Firestore's addDoc()/setDoc() reject any field whose value is `undefined`
+// (as opposed to `null`), and callers of this function have historically
+// passed loose objects like `{ submissionId, activityQuestionId }` where
+// `activityQuestionId` can legitimately be `undefined`. Wrapping it here,
+// once, protects every current and future call site instead of relying on
+// each caller to remember to sanitize its own metadata object.
 export async function sendTeacherNotification(
   teacherId: string,
   teacherEmail: string,
@@ -521,20 +528,23 @@ export async function sendTeacherNotification(
 ) {
   try {
     if (!teacherId && !teacherEmail) return;
-    await addDoc(collection(db, 'notifications'), {
-      userId: teacherId || '',
-      recipientId: teacherId || '',
-      userEmail: teacherEmail || '',
-      recipientEmail: teacherEmail || '',
-      title,
-      message,
-      type,
-      read: false,
-      isRead: false,
-      metadata,
-      createdAt: serverTimestamp(),
-      timestamp: serverTimestamp(),
-    });
+    await addDoc(
+      collection(db, 'notifications'),
+      stripUndefinedValues({
+        userId: teacherId || '',
+        recipientId: teacherId || '',
+        userEmail: teacherEmail || '',
+        recipientEmail: teacherEmail || '',
+        title,
+        message,
+        type,
+        read: false,
+        isRead: false,
+        metadata: stripUndefinedValues(metadata),
+        createdAt: serverTimestamp(),
+        timestamp: serverTimestamp(),
+      })
+    );
   } catch (err) {
     console.warn('Could not write notification document:', err);
   }
@@ -1153,6 +1163,14 @@ export async function approveContentSubmission(
     }
   );
 
+  // FIX: was `activityQuestionId: targetQuestionId` — targetQuestionId can
+  // be `undefined` here (e.g. a fresh train_parameters submission that
+  // never had sub.activityQuestionId set), and Firestore's addDoc() throws
+  // on any field whose value is `undefined`. Coerced to `null` to match the
+  // updateDoc(subRef, ...) call directly above, which already does this
+  // correctly. This is what was causing:
+  //   "Unsupported field value: undefined (found in field
+  //    metadata.activityQuestionId in document notifications/...)"
   await sendTeacherNotification(
     sub.createdById,
     sub.createdByEmail || '',
@@ -1167,7 +1185,7 @@ export async function approveContentSubmission(
       ? `Your deletion request for "${sub.questionText}" has been approved and removed from the mobile app.`
       : `Your question "${sub.questionText}" (${sub.category.toUpperCase()}) has been approved by ${adminName} and is now live in the mobile app.`,
     'approval',
-    { submissionId, activityQuestionId: targetQuestionId }
+    { submissionId, activityQuestionId: targetQuestionId || null }
   );
 }
 

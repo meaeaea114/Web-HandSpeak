@@ -32,7 +32,10 @@ import {
   setSubmissionArchivedStatus,
   deleteContentSubmission,
   getPublishedActivityQuestions,
+  deserializeSequences,
 } from '@/lib/content-service';
+import { triggerModelRetrain, type RetrainResult } from '@/lib/model-retrain-client';
+import { GestureVerifyTester } from '@/components/dashboard/gesture-verify-tester';
 
 function formatTimestamp(ts: any): string {
   if (!ts) return '—';
@@ -260,7 +263,16 @@ export default function ContentApprovalPage() {
     };
   }, [submissions]);
 
-  const handleApprove = async (id: string, e?: React.MouseEvent) => {
+  // Per-submission retrain status, keyed by submission id, so the "syncing
+  // to mobile model" banner only shows on the calibration card that was just
+  // approved rather than globally. See lib/model-retrain-client.ts + the
+  // route it calls (app/api/admin/retrain-model/route.ts) for what actually
+  // runs, and its self-hosted/local-only caveat.
+  const [retrainStatus, setRetrainStatus] = useState<
+    Record<string, { state: 'running' | 'done' | 'error' | 'skipped'; result?: RetrainResult }>
+  >({});
+
+  const handleApprove = async (id: string, isModelCalibration: boolean, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!user?.id) return;
     setBusyId(id);
@@ -273,6 +285,19 @@ export default function ContentApprovalPage() {
         user.email || ''
       );
       await loadPublished();
+
+      // Only a gesture-training ("Model Calibration") approval needs the
+      // retrain pipeline — a normal activity-question approval doesn't touch
+      // gesture_training_data at all, so don't fire it for those.
+      if (isModelCalibration) {
+        setRetrainStatus((prev) => ({ ...prev, [id]: { state: 'running' } }));
+        triggerModelRetrain().then((result) => {
+          setRetrainStatus((prev) => ({
+            ...prev,
+            [id]: { state: result.success ? 'done' : 'error', result },
+          }));
+        });
+      }
     } catch (err: any) {
       setActionError(err?.message || 'Failed to approve this content.');
     } finally {
@@ -657,8 +682,64 @@ export default function ContentApprovalPage() {
                             <div className="p-2 bg-slate-50 rounded-xl border">Distance: <span className="text-[#521903] font-mono">{content.toleranceBounds.distance}%</span></div>
                             <div className="p-2 bg-slate-50 rounded-xl border">Switch Hands: <span className="text-[#521903] font-mono">{content.toleranceBounds.switchHands}%</span></div>
                           </div>
+                          <p className="text-[9px] text-slate-400 font-bold pt-1">
+                            These are framing parameters requested at capture time, not an accuracy score — use "Test
+                            This Sign Yourself" below to actually check the recorded gesture.
+                          </p>
                         </div>
-                      ) : (
+                      ) : null}
+
+                      {/* Admin can perform the sign live on camera and see a
+                          real DTW confidence score against the trainer's
+                          captured samples, instead of approving blind based
+                          only on the tolerance numbers above. */}
+                      {isModelCalibration && (
+                        <GestureVerifyTester
+                          gestureLabel={(content.questionText || '').replace('Calibrate Model: ', '')}
+                          referenceSequences={deserializeSequences((content as any).trainingSequences)}
+                        />
+                      )}
+
+                      {isModelCalibration && retrainStatus[content.id] && (
+                        <div
+                          className={`p-2.5 rounded-xl border text-[11px] font-bold flex items-start gap-2 ${
+                            retrainStatus[content.id].state === 'running'
+                              ? 'bg-sky-50 border-sky-200 text-sky-700'
+                              : retrainStatus[content.id].state === 'done'
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-amber-50 border-amber-200 text-amber-800'
+                          }`}
+                        >
+                          {retrainStatus[content.id].state === 'running' && (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 mt-0.5" />
+                              Approved — retraining the gesture model in the background (no need to run the export/train
+                              scripts by hand).
+                            </>
+                          )}
+                          {retrainStatus[content.id].state === 'done' && (
+                            <>
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                              Model retrained and deployed to public/models/gesture_lstm.
+                            </>
+                          )}
+                          {retrainStatus[content.id].state === 'error' && (
+                            <>
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                              <span>
+                                Approved, but auto-retrain didn't complete:{' '}
+                                {retrainStatus[content.id].result?.error || 'unknown error'}. You can still run{' '}
+                                <code className="bg-black/5 px-1 rounded">node scripts/export-training-dataset.js</code>{' '}
+                                and{' '}
+                                <code className="bg-black/5 px-1 rounded">python scripts/train_gesture_lstm.py</code>{' '}
+                                manually.
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {!isModelCalibration && (
                         <div className="space-y-1.5">
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
                             Answer Options:
@@ -719,7 +800,7 @@ export default function ContentApprovalPage() {
                           </button>
 
                           <button
-                            onClick={(e) => handleApprove(content.id, e)}
+                            onClick={(e) => handleApprove(content.id, isModelCalibration, e)}
                             disabled={isBusy}
                             className={`px-4 py-1.5 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center gap-1.5 cursor-pointer disabled:opacity-40 ${
                               isModelCalibration

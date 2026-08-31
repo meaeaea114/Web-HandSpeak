@@ -1062,7 +1062,8 @@ function ContentManagementComponent() {
         user?.id || 'teacher',
         user?.fullName || user?.name || 'Faculty Trainer',
         user?.email || '',
-        takes // number[][][] — one entry per take, each a full temporal sequence for LSTM retraining
+        takes, // number[][][] — one entry per take, each a full temporal sequence for LSTM retraining
+        activeLesson.id // ties this dataset to the exact lesson it was captured from (see getGestureTrainingDataForContent)
       );
       alert(
         `Gesture training dataset for "${activeLesson.displayTitle}" submitted for Admin Approval! It will sync to the mobile app once approved.`

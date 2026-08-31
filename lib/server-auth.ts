@@ -69,3 +69,47 @@ export async function requireAnalyticsAccess(request: NextRequest): Promise<Auth
     return { authorized: false, status: 500, error: 'Could not verify account authorization.' };
   }
 }
+
+// Stricter check for admin-only server actions (e.g. kicking off the gesture
+// LSTM retraining pipeline) — a teacher can submit training data, but only an
+// admin who actually approves it should be able to trigger a retrain.
+export async function requireAdminAccess(request: NextRequest): Promise<AuthCheckResult> {
+  const authHeader = request.headers.get('authorization') || request.headers.get('Authorization');
+  const idToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+  if (!idToken) {
+    return { authorized: false, status: 401, error: 'Missing authentication token.' };
+  }
+
+  let uid: string;
+  try {
+    const decoded = await getAdminAuth().verifyIdToken(idToken);
+    uid = decoded.uid;
+  } catch (err) {
+    console.error('ID token verification failed:', err);
+    return { authorized: false, status: 401, error: 'Invalid or expired authentication token.' };
+  }
+
+  try {
+    const db = getAdminDb();
+    const snap = await db.collection('users').doc(uid).get();
+    if (!snap.exists) {
+      return { authorized: false, status: 403, error: 'No account record found for this user.' };
+    }
+    const data = snap.data() || {};
+    const role = String(data.role || '').toLowerCase();
+    const status = String(data.status || '').toLowerCase();
+
+    if (status !== 'active') {
+      return { authorized: false, status: 403, error: 'Account is not active.' };
+    }
+    if (role !== 'admin') {
+      return { authorized: false, status: 403, error: 'Only an administrator can trigger model retraining.' };
+    }
+
+    return { authorized: true, caller: { uid, role } };
+  } catch (err) {
+    console.error('Authorization lookup failed:', err);
+    return { authorized: false, status: 500, error: 'Could not verify account authorization.' };
+  }
+}
