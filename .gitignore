@@ -21,4 +21,6 @@ venv/
 pip-temp/
 pip-cache/
 __pycache__/
-*.pyc
+*.pycasl-alphabet/
+
+asl-alphabet/
