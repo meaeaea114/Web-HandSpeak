@@ -83,6 +83,18 @@ import {
 } from '@/lib/gesture-sequence-model';
 import { matchGestureTemplate, type TemplateMatchResult } from '@/lib/gesture-template-match';
 import { GestureRecordingSession } from '@/lib/gesture-recording-session';
+// Real-camera validation of the guided capture-variation instructions below —
+// turns "Move your hand to the left" from cosmetic text into an actual,
+// measured requirement checked against real MediaPipe landmark data.
+import {
+  buildRawFrameMetric,
+  validateVariationTake,
+  variationLiveHint,
+  RawMetricBuffer,
+  VariationBaselineTracker,
+  type VariationId,
+  type VariationValidationResult,
+} from '@/lib/movement-variation-validator';
 
 type ContentScreen = 'dashboard' | 'wizard_question' | 'wizard_answers';
 type CategoryWorkspaceTab = 'tutorials_practice' | 'activity_levels';
@@ -149,17 +161,22 @@ const REQUIRED_TAKES = 15; // how many full-sequence repetitions of a sign we wa
 // distances, and angles instead of clustering in one spot.
 //
 // The gesture performed must never change — only where/how it's framed.
-const CAPTURE_VARIATION_STEPS: Array<{ title: string; detail: string }> = [
-  { title: 'Natural', detail: 'Perform the sign naturally, centered in the frame.' },
-  { title: 'Shift Left', detail: 'Perform the sign with your hand shifted slightly to the LEFT.' },
-  { title: 'Shift Right', detail: 'Perform the sign with your hand shifted slightly to the RIGHT.' },
-  { title: 'Move Higher', detail: 'Perform the sign slightly HIGHER in the camera frame.' },
-  { title: 'Move Lower', detail: 'Perform the sign slightly LOWER in the camera frame.' },
-  { title: 'Move Closer', detail: 'Perform the sign slightly CLOSER to the camera.' },
-  { title: 'Move Farther', detail: 'Perform the sign slightly FARTHER from the camera.' },
-  { title: 'Wrist Angle', detail: 'Slightly change your hand/wrist ANGLE while performing the sign.' },
-  { title: 'Rotate/Tilt', detail: 'Slightly rotate or tilt your hand, if that still feels natural for this sign.' },
-  { title: 'Reposition', detail: 'Perform the sign from a slightly different position within the frame (e.g. a corner).' },
+//
+// Each step's `variation` id is checked for real against actual captured
+// camera data by lib/movement-variation-validator.ts — the instruction text
+// below is what the trainer reads, but it is never what decides whether a
+// take is accepted. See handleSaveTake().
+const CAPTURE_VARIATION_STEPS: Array<{ title: string; detail: string; variation: VariationId }> = [
+  { title: 'Natural', detail: 'Perform the sign naturally, centered in the frame.', variation: 'natural' },
+  { title: 'Shift Left', detail: 'Perform the sign with your hand shifted slightly to the LEFT.', variation: 'shift_left' },
+  { title: 'Shift Right', detail: 'Perform the sign with your hand shifted slightly to the RIGHT.', variation: 'shift_right' },
+  { title: 'Move Higher', detail: 'Perform the sign slightly HIGHER in the camera frame.', variation: 'move_higher' },
+  { title: 'Move Lower', detail: 'Perform the sign slightly LOWER in the camera frame.', variation: 'move_lower' },
+  { title: 'Move Closer', detail: 'Perform the sign slightly CLOSER to the camera.', variation: 'move_closer' },
+  { title: 'Move Farther', detail: 'Perform the sign slightly FARTHER from the camera.', variation: 'move_farther' },
+  { title: 'Wrist Angle', detail: 'Slightly change your hand/wrist ANGLE while performing the sign.', variation: 'wrist_angle' },
+  { title: 'Rotate/Tilt', detail: 'Slightly rotate or tilt your hand, if that still feels natural for this sign.', variation: 'rotate_tilt' },
+  { title: 'Reposition', detail: 'Perform the sign from a slightly different position within the frame (e.g. a corner).', variation: 'reposition' },
 ];
 
 /**
@@ -174,7 +191,7 @@ const CAPTURE_VARIATION_STEPS: Array<{ title: string; detail: string }> = [
 function getCaptureInstruction(
   takeIndex: number,
   totalRequired: number
-): { title: string; detail: string; stepNumber: number } {
+): { title: string; detail: string; variation: VariationId; stepNumber: number } {
   const stepNumber = Math.min(takeIndex, Math.max(totalRequired - 1, 0)) + 1;
   const isFirst = takeIndex <= 0;
   const isLast = takeIndex >= totalRequired - 1;
@@ -417,6 +434,11 @@ function ContentManagementComponent() {
   const [captureComplete, setCaptureComplete] = useState(false);
   const [livePrediction, setLivePrediction] = useState<GesturePrediction | null>(null);
   const [templateMatch, setTemplateMatch] = useState<TemplateMatchResult | null>(null);
+  // Real-time, camera-measured check of the CURRENT guided-variation
+  // instruction (see CAPTURE_VARIATION_STEPS) — updated every detection
+  // tick while a take is being recorded, so the trainer sees actual
+  // measured progress instead of blindly hoping a take will be accepted.
+  const [liveVariationCheck, setLiveVariationCheck] = useState<VariationValidationResult | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -425,6 +447,17 @@ function ContentManagementComponent() {
   const orientationSmootherRef = useRef<MultiChannelSmoother<'roll' | 'pitch' | 'yaw'>>(
     new MultiChannelSmoother(['roll', 'pitch', 'yaw'], ORIENTATION_SMOOTHING_ALPHA)
   );
+  // Raw (non-normalized) per-frame position/scale/orientation captured in
+  // parallel with sequenceBufferRef, purely to validate real movement — see
+  // lib/movement-variation-validator.ts for why the normalized LSTM feature
+  // vector can't be used for this.
+  const rawMetricBufferRef = useRef<RawMetricBuffer>(new RawMetricBuffer());
+  const variationBaselineRef = useRef<VariationBaselineTracker>(new VariationBaselineTracker());
+  // Mirrors of state that the detection-loop's setInterval closure (created
+  // once per camera-setup effect run) needs to read FRESH every tick without
+  // tearing down and restarting the camera stream on every click.
+  const isRecordingTakeRef = useRef(false);
+  const takesCapturedRef = useRef(0);
 
   // Form Wizard State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -581,6 +614,16 @@ function ContentManagementComponent() {
     };
   }, []);
 
+  // Keep ref mirrors of isRecordingTake/takesCaptured fresh for the
+  // detection-loop closure below, without restarting the camera on every
+  // Record/Stop click (see the effect's own dependency array).
+  useEffect(() => {
+    isRecordingTakeRef.current = isRecordingTake;
+  }, [isRecordingTake]);
+  useEffect(() => {
+    takesCapturedRef.current = takesCaptured;
+  }, [takesCaptured]);
+
   // Webcam activation + REAL per-frame detection (smoothed orientation, framing,
   // LSTM prediction, DTW template-match fallback, and take-based gesture recording)
   useEffect(() => {
@@ -591,9 +634,11 @@ function ContentManagementComponent() {
       }
       setCameraActive(false);
       sequenceBufferRef.current.clear();
+      rawMetricBufferRef.current.clear();
       orientationSmootherRef.current.reset();
       setLivePrediction(null);
       setTemplateMatch(null);
+      setLiveVariationCheck(null);
       setHandDetected(false);
       return;
     }
@@ -602,9 +647,12 @@ function ContentManagementComponent() {
     // previous lesson's progress never bleeds into this one.
     if (simulatorMode === 'train') {
       captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
+      variationBaselineRef.current.reset();
+      rawMetricBufferRef.current.clear();
       setTakesCaptured(0);
       setCaptureComplete(false);
       setIsRecordingTake(false);
+      setLiveVariationCheck(null);
     }
 
     let detectionInterval: ReturnType<typeof setInterval> | null = null;
@@ -668,6 +716,24 @@ function ContentManagementComponent() {
             // and Practice/Continuous can run live LSTM prediction off it.
             const featureVector = landmarksToFeatureVector(landmarksPerHand);
             sequenceBufferRef.current.push(featureVector);
+
+            // Train-mode-only: track the REAL, non-normalized wrist
+            // position/scale/orientation for this frame alongside the
+            // normalized feature vector above, so the take can later be
+            // checked against its guided-variation instruction using actual
+            // camera-measured movement — see lib/movement-variation-validator.ts.
+            if (simulatorMode === 'train') {
+              const rawWrist = landmarksPerHand[0][0];
+              const rawMetric = buildRawFrameMetric(rawWrist, framing.sizeRatio, orientation);
+              rawMetricBufferRef.current.push(rawMetric);
+
+              if (isRecordingTakeRef.current) {
+                const currentVariation = getCaptureInstruction(takesCapturedRef.current, REQUIRED_TAKES).variation;
+                const baseline = variationBaselineRef.current.get();
+                const liveCheck = validateVariationTake(currentVariation, baseline, rawMetricBufferRef.current.snapshot());
+                setLiveVariationCheck(liveCheck);
+              }
+            }
 
             if (isGestureModelReady()) {
               // The LSTM's labels are the gesture_training_data document ids
@@ -743,18 +809,57 @@ function ContentManagementComponent() {
     [takesCaptured]
   );
 
-  /** Snapshots the current rolling buffer as one completed take. */
+  /**
+   * Snapshots the current rolling buffer as one completed take — but only
+   * after confirming, from REAL captured camera data, that the trainer
+   * actually performed the movement this take's instruction asked for.
+   * A take that doesn't show sufficient real movement is rejected here: it
+   * is never added to the session, and recording is left running so the
+   * trainer can keep adjusting and simply try Stop & Save again (the
+   * underlying buffers are rolling windows, not a one-shot capture).
+   */
   const handleSaveTake = () => {
     if (!sequenceBufferRef.current.isFull()) {
       alert('Keep signing for about a second — not enough frames captured yet.');
       return;
     }
-    captureSessionRef.current.addTake(sequenceBufferRef.current.snapshot());
+
+    const takeIndex = captureSessionRef.current.totalCaptured();
+    const instruction = getCaptureInstruction(takeIndex, REQUIRED_TAKES);
+    const rawFrames = rawMetricBufferRef.current.snapshot();
+    const baseline = variationBaselineRef.current.get();
+    const validation = validateVariationTake(instruction.variation, baseline, rawFrames);
+
+    if (!validation.passed) {
+      alert(
+        `Not saved — this take doesn't show enough real "${instruction.title}" movement yet.\n\n` +
+          `${validation.reason}\n\n` +
+          `Keep the camera rolling, actually perform the movement, then tap "Stop & Save" again.`
+      );
+      return;
+    }
+
+    captureSessionRef.current.addTake(sequenceBufferRef.current.snapshot(), {
+      variation: instruction.variation,
+      passed: validation.passed,
+      measured: validation.measured,
+      required: validation.required,
+    });
+
+    // The first accepted take is always the 'natural' baseline instruction
+    // (see getCaptureInstruction) — establish the real reference position
+    // every later variation instruction is measured against.
+    if (takeIndex === 0) {
+      variationBaselineRef.current.set(rawFrames);
+    }
+
     const newCount = captureSessionRef.current.totalCaptured();
     setTakesCaptured(newCount);
     setCaptureComplete(captureSessionRef.current.isComplete);
     setIsRecordingTake(false);
+    setLiveVariationCheck(null);
     sequenceBufferRef.current.clear();
+    rawMetricBufferRef.current.clear();
   };
 
   const handleSaveTrainingSample = async () => {
@@ -793,9 +898,12 @@ function ContentManagementComponent() {
         `Gesture training dataset for "${activeLesson.displayTitle}" submitted for Admin Approval! It will sync to the mobile app once approved.`
       );
       captureSessionRef.current = new GestureRecordingSession(REQUIRED_TAKES);
+      variationBaselineRef.current.reset();
+      rawMetricBufferRef.current.clear();
       setTakesCaptured(0);
       setCaptureComplete(false);
       setIsRecordingTake(false);
+      setLiveVariationCheck(null);
       setSelectedLessonIndex(null);
       setActiveTab('submissions');
       setWorkspaceTab('activity_levels');
@@ -1829,6 +1937,37 @@ function ContentManagementComponent() {
                     </p>
                   </div>
 
+                  {/* Real-time, CAMERA-MEASURED progress toward this take's
+                      variation requirement — not just instruction text. See
+                      lib/movement-variation-validator.ts. Only shown once a
+                      baseline exists (i.e. after take #1) and while actively
+                      recording a non-"natural" take. */}
+                  {isRecordingTake && liveVariationCheck && currentCaptureStep.variation !== 'natural' && (
+                    <div
+                      className={`w-full p-2 rounded-xl border text-center space-y-1 ${
+                        liveVariationCheck.passed
+                          ? 'bg-emerald-50 border-emerald-200'
+                          : 'bg-rose-50 border-rose-200'
+                      }`}
+                    >
+                      <p
+                        className={`text-[10px] font-black uppercase tracking-wide ${
+                          liveVariationCheck.passed ? 'text-emerald-700' : 'text-rose-700'
+                        }`}
+                      >
+                        {variationLiveHint(liveVariationCheck, currentCaptureStep.title)}
+                      </p>
+                      <div className="w-full h-1.5 bg-white/70 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-150 ${
+                            liveVariationCheck.passed ? 'bg-emerald-500' : 'bg-rose-400'
+                          }`}
+                          style={{ width: `${Math.max(4, Math.min(100, Math.round(liveVariationCheck.progress * 100)))}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div className="w-full space-y-1 text-center">
                     <div className="flex justify-between text-[10px] font-bold text-slate-500 px-1">
                       <span>Takes Captured</span>
@@ -1855,6 +1994,8 @@ function ContentManagementComponent() {
                       <button
                         onClick={() => {
                           sequenceBufferRef.current.clear();
+                          rawMetricBufferRef.current.clear();
+                          setLiveVariationCheck(null);
                           setIsRecordingTake(true);
                         }}
                         disabled={trainingSaving || !handDetected}
