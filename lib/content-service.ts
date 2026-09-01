@@ -123,7 +123,8 @@ export type TrainingDatasetStatus =
   | 'collecting'
   | 'dataset_ready'
   | 'pending_approval'
-  | 'approved_awaiting_model';
+  | 'approved_awaiting_model'
+  | 'model_deployed';
 
 export interface GestureTrainingData {
   id: string;
