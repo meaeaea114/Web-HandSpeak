@@ -28,10 +28,12 @@ so this script never needs to normalize anything itself.
 Usage:
     pip install -r requirements.txt
     node export-training-dataset.js   # from repo root: builds training_data/
+    
+    # Train multi-class model:
     python train_gesture_lstm.py
-    # then convert to TF.js format:
-    tensorflowjs_converter --input_format=keras \
-        gesture_lstm.h5 ../public/models/gesture_lstm
+    
+    # Train isolated binary model (e.g., J vs. Everything Else):
+    python train_gesture_lstm.py --target alphabet_j
 """
 
 import json
@@ -39,6 +41,7 @@ import os
 import shutil
 import subprocess
 import sys
+import argparse
 from collections import Counter
 
 import numpy as np
@@ -52,16 +55,6 @@ from tensorflow.keras.utils import to_categorical
 DATA_DIR = "training_data"
 SEQUENCE_LENGTH = 30
 FEATURE_LENGTH = 126
-MODEL_OUT = "gesture_lstm.h5"
-LABELS_OUT = "labels.json"
-TFJS_OUT_DIR = os.path.join("..", "public", "models", "gesture_lstm")
-
-# An LSTM classifier needs a genuine train/val split per class, and
-# train_test_split(..., stratify=y) requires every class to appear on both
-# sides of the split. Below this count that's not possible, and sklearn's
-# raw error message doesn't say what a teacher/admin should actually do
-# about it, so we check for it ourselves and explain in gesture-pipeline
-# terms (i.e. "capture/approve more takes for this sign").
 MIN_SAMPLES_PER_CLASS = 2
 
 
@@ -143,20 +136,23 @@ def build_model(num_classes: int) -> tf.keras.Model:
         LSTM(32),
         Dropout(0.3),
         Dense(64, activation="relu"),
-        Dense(num_classes, activation="softmax"),
     ])
-    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+    
+    # If num_classes is 1, it's a binary Yes/No classification
+    if num_classes == 1:
+        model.add(Dense(1, activation="sigmoid"))
+        model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    else:
+        # Otherwise, standard multi-class
+        model.add(Dense(num_classes, activation="softmax"))
+        model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+        
     return model
 
 
-def convert_to_tfjs() -> bool:
+def convert_to_tfjs(model_out: str, labels_out: str, tfjs_out_dir: str) -> bool:
     """Runs the tensorflowjs_converter CLI and copies labels.json alongside
-    the converted model in public/models/gesture_lstm/, so the Next.js app's
-    loadGestureSequenceModel() has both files it expects at the URLs it
-    already fetches. Best-effort: if the `tensorflowjs` CLI isn't installed
-    in this environment, this prints the manual command instead of failing
-    the whole training run — the .h5/labels.json are still saved either way.
-    Returns True only if the conversion + copy actually completed.
+    the converted model so the Next.js app's loadGestureSequenceModel() has both.
     """
     converter = shutil.which("tensorflowjs_converter")
     if not converter:
@@ -164,52 +160,76 @@ def convert_to_tfjs() -> bool:
             "\ntensorflowjs_converter not found on PATH — skipping automatic TF.js "
             "conversion (this does NOT affect the saved .h5/labels.json above)."
         )
-        print("Install it with: pip install tensorflowjs")
-        print("Then run manually:")
-        print(f"  tensorflowjs_converter --input_format=keras {MODEL_OUT} {TFJS_OUT_DIR}")
-        print(f"  cp {LABELS_OUT} {TFJS_OUT_DIR}/labels.json")
         return False
 
-    os.makedirs(TFJS_OUT_DIR, exist_ok=True)
-    print(f"\nConverting {MODEL_OUT} to TF.js format at {TFJS_OUT_DIR}/ ...")
+    os.makedirs(tfjs_out_dir, exist_ok=True)
+    print(f"\nConverting {model_out} to TF.js format at {tfjs_out_dir}/ ...")
+    
     result = subprocess.run(
-        [converter, "--input_format=keras", MODEL_OUT, TFJS_OUT_DIR],
+        [converter, "--input_format=keras", model_out, tfjs_out_dir],
         capture_output=True,
         text=True,
     )
+    
     if result.returncode != 0:
         print("tensorflowjs_converter failed:")
         print(result.stderr or result.stdout)
-        print(
-            "The trained model/labels are still saved locally "
-            f"({MODEL_OUT}, {LABELS_OUT}) — fix the error above and rerun the "
-            "conversion manually when ready."
-        )
         return False
 
-    shutil.copyfile(LABELS_OUT, os.path.join(TFJS_OUT_DIR, "labels.json"))
-    print(f"Wrote TF.js model + labels.json to {TFJS_OUT_DIR}/")
-    print(
-        "The Next.js app will pick this up automatically the next time "
-        "loadGestureSequenceModel() runs (public/ is served as static assets) — "
-        "no code change needed."
-    )
+    shutil.copyfile(labels_out, os.path.join(tfjs_out_dir, "labels.json"))
+    print(f"Wrote TF.js model + labels.json to {tfjs_out_dir}/")
     return True
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--target', type=str, help='Target class to train as a binary classifier (e.g., alphabet_j)')
+    args = parser.parse_args()
+
     print("Loading dataset...")
-    X, y, labels = load_dataset()
-    print(f"Loaded {len(X)} sequences across {len(labels)} classes: {labels}")
+    X, y_raw, labels = load_dataset()
+    print(f"Loaded {len(X)} sequences across {len(labels)} total classes found in data.")
 
-    y_cat = to_categorical(y, num_classes=len(labels))
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y_cat, test_size=0.2, random_state=42, stratify=y
-    )
+    target = args.target
 
-    model = build_model(num_classes=len(labels))
+    if target:
+        if target not in labels:
+            print(f"Error: Target '{target}' not found in available dataset files.")
+            sys.exit(1)
+            
+        print(f"\n--- Training isolated BINARY model for: {target} ---")
+        
+        # Configure output paths dynamically based on target name
+        MODEL_OUT = f"{target}.h5"
+        LABELS_OUT = f"{target}_labels.json"
+        TFJS_OUT_DIR = os.path.join("..", "public", "models", target)
+        
+        # Convert multiclass labels to binary: 1 for target, 0 for everything else
+        target_idx = labels.index(target)
+        y = np.array([1 if val == target_idx else 0 for val in y_raw])
+        out_labels = [f"not_{target}", target]
+        
+        # Stratify ensures train/val both get an equal mix of 1s and 0s
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        model = build_model(num_classes=1)
+        
+    else:
+        print("\n--- Training MULTI-CLASS model for all signs ---")
+        MODEL_OUT = "gesture_lstm.h5"
+        LABELS_OUT = "labels.json"
+        TFJS_OUT_DIR = os.path.join("..", "public", "models", "gesture_lstm")
+        
+        y = to_categorical(y_raw, num_classes=len(labels))
+        out_labels = labels
+        
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y_raw
+        )
+        model = build_model(num_classes=len(labels))
+
     model.summary()
-
     early_stop = EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True)
 
     model.fit(
@@ -226,17 +246,15 @@ def main():
 
     model.save(MODEL_OUT)
     with open(LABELS_OUT, "w") as f:
-        json.dump(labels, f)
+        json.dump(out_labels, f)
 
     print(f"Saved model to {MODEL_OUT} and labels to {LABELS_OUT}")
 
-    deployed = convert_to_tfjs()
+    # Use the dynamic paths for the TFJS conversion step
+    deployed = convert_to_tfjs(MODEL_OUT, LABELS_OUT, TFJS_OUT_DIR)
+    
     if not deployed:
-        print(
-            "\nTraining completed and the model was saved, but it is NOT yet deployed "
-            "to public/models/gesture_lstm/ — students/teachers will keep seeing the "
-            "DTW template-match fallback until the conversion step above is completed."
-        )
+        print("\nTraining completed, but model was not converted to TF.js format.")
 
 
 if __name__ == "__main__":
