@@ -24,3 +24,14 @@ __pycache__/
 *.pycasl-alphabet/
 
 asl-alphabet/
+
+# Virtual Environments
+venv/
+venv-convert/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Data (if applicable)
+training_data/
